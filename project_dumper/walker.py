@@ -53,12 +53,14 @@ class Walker:
             return (0 if (self.cfg.dirs_first_in_tree and p.is_dir()) else 1, p.name.lower())
         return sorted(out, key=key)
 
-    def build_tree(self, root: Path, collapsed: set[Path] | None = None) -> str:
+    def build_tree(self, root: Path, collapsed: set[Path] | None = None, excluded: set[Path] | None = None) -> str:
         collapsed = collapsed or set()
+        excluded = excluded or set()
         lines: list[str] = []
 
         def rec(cur: Path, prefix: str = "") -> None:
-            entries = self.list_entries(cur)
+            all_entries = self.list_entries(cur)
+            entries = [e for e in all_entries if not (e.is_file() and e in excluded)]
             for i, p in enumerate(entries):
                 last = (i == len(entries) - 1)
                 branch = "└── " if last else "├── "
@@ -66,7 +68,6 @@ class Walker:
                 if p.is_dir():
                     ext = prefix + ("    " if last else "│   ")
                     if p in collapsed:
-                        # папка свёрнута слева → показываем маркер содержимого
                         lines.append(ext + "…")
                     else:
                         rec(p, ext)
@@ -89,18 +90,19 @@ class Walker:
 
 # Фоновый воркер с прогрессом
 class ScanThread(threading.Thread):
-    def __init__(self, root: Path, walker: Walker, queue_out: "queue.Queue[tuple[str,object]]", collapsed_dirs: set[Path], only_tree: bool):
+    def __init__(self, root: Path, walker: Walker, queue_out: "queue.Queue[tuple[str,object]]", collapsed_dirs: set[Path], excluded_files: set[Path], only_tree: bool):
         super().__init__(daemon=True)
         self.root = root
         self.w = walker
         self.q = queue_out
         self.collapsed = collapsed_dirs
+        self.excluded = excluded_files
         self.only_tree = only_tree
 
     def run(self):
         try:
             self.w.load_cfg(self.root)
-            tree = self.w.build_tree(self.root, self.collapsed)
+            tree = self.w.build_tree(self.root, self.collapsed, self.excluded)
             self.q.put(("tree", tree))
             if self.only_tree:
                 self.q.put(("done", None))
@@ -113,6 +115,11 @@ class ScanThread(threading.Thread):
                 rel = p.relative_to(self.root).as_posix()
                 hide = any((p.is_relative_to(d) for d in self.collapsed)) if hasattr(p, "is_relative_to") \
                        else any(str(p).startswith(str(d)) for d in self.collapsed)
+
+                # исключённые одиночные файлы пропускаем полностью
+                if p in self.excluded:
+                    self.q.put(("progress", i))
+                    continue
 
                 if hide and not self.w.cfg.include_collapsed_in_dump:
                     # полностью пропускаем: ни заголовка, ни "Содержимое скрыто", ни file_sep

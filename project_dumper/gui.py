@@ -45,6 +45,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.root_path: Path | None = None
         self.collapsed_dirs: set[Path] = set()
+        self.excluded_files: set[Path] = set()
 
         self.q: "queue.Queue[tuple[str, object]]" = queue.Queue()
         self.builder: DumpBuilder | None = None
@@ -168,7 +169,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # стрелки в дереве управляют скрытием в дампе
         self.tree.expanded.connect(self._on_tree_expanded)
         self.tree.collapsed.connect(self._on_tree_collapsed)
-
+        self.tree.doubleClicked.connect(self._on_tree_double_clicked)
         self.btn_apply.clicked.connect(self.apply_settings)
         self.btn_save_defaults.clicked.connect(self.save_defaults_clicked)
 
@@ -212,6 +213,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 item = QtGui.QStandardItem(child.name)
                 item.setEditable(False)
                 item.setData(str(child), QtCore.Qt.ItemDataRole.UserRole)
+                if child.is_file() and child in self.excluded_files:
+                    f = item.font(); f.setStrikeOut(True); item.setFont(f)
+                    item.setForeground(QtGui.QBrush(QtGui.QColor(160,160,160)))
                 parent_item.appendRow(item)
                 if child.is_dir():
                     add_dir(item, child)
@@ -252,6 +256,23 @@ class MainWindow(QtWidgets.QMainWindow):
             self.collapsed_dirs.add(p)
         self.scan()
 
+    def _on_tree_double_clicked(self, index: QtCore.QModelIndex) -> None:
+        data = self.tree_model.data(index, QtCore.Qt.ItemDataRole.UserRole)
+        if not data:
+            return
+        p = Path(str(data))
+        if p.is_file():
+            item = self.tree_model.itemFromIndex(index)
+            if p in self.excluded_files:
+                self.excluded_files.remove(p)
+                f = item.font(); f.setStrikeOut(False); item.setFont(f)
+                item.setForeground(QtGui.QBrush())
+            else:
+                self.excluded_files.add(p)
+                f = item.font(); f.setStrikeOut(True); item.setFont(f)
+                item.setForeground(QtGui.QBrush(QtGui.QColor(160,160,160)))
+            self.scan()
+
     # Scan pipeline
     def scan(self) -> None:
         path_str = self.path_edit.text().strip()
@@ -273,7 +294,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._total_files = 0; self._file_index = 0
 
         self.q = queue.Queue()
-        thr = ScanThread(root, self.w, self.q, self.collapsed_dirs, self.only_tree_chk.isChecked())
+        thr = ScanThread(root, self.w, self.q, self.collapsed_dirs, self.excluded_files, self.only_tree_chk.isChecked())
         thr.start()
         if not self.timer.isActive():
             self.timer.start()
