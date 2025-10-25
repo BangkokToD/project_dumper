@@ -11,6 +11,8 @@ class DumpBuilder:
             self.obj = {"tree": "", "files": []}
         else:
             self.buf = io.StringIO()
+        # новый флаг: был ли уже выведен хоть один включённый файл
+        self._has_any_file = False
 
     def set_tree(self, tree: str):
         if self.mode == "json":
@@ -28,10 +30,15 @@ class DumpBuilder:
         if self.mode == "json":
             self._cur = {"path": relpath, "content": ""}
             self.obj["files"].append(self._cur)
-        elif self.mode == "md":
-            self.buf.write(f"## {relpath}\n\n")
         else:
-            self.buf.write(relpath + "\n\n")
+            # печатаем SEP только перед не-первым включённым файлом
+            if self._has_any_file:
+                self.buf.write(SEP + "\n\n")
+            self._has_any_file = True
+            if self.mode == "md":
+                self.buf.write(f"## {relpath}\n\n")
+            else:
+                self.buf.write(relpath + "\n\n")
 
     def add_chunk(self, s: str):
         if self.mode == "json":
@@ -42,8 +49,6 @@ class DumpBuilder:
     def end_file(self, is_last: bool):
         if self.mode in ("md","txt"):
             self.buf.write("\n\n")
-            if not is_last:
-                self.buf.write(SEP + "\n\n")
 
     def build(self) -> str:
         if self.mode == "json":

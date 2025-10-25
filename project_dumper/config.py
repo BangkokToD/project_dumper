@@ -30,7 +30,9 @@ class Config:
     binary_threshold: float = 0.30
     detect_encoding: bool = True
     output_format: str = "txt"  # txt|md|json
-
+    theme: str = "light"        # light|dark
+    include_collapsed_in_dump: bool = True
+    
 def load_defaults() -> Config:
     if RC_PATH.exists():
         try:

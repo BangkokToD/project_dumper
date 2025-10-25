@@ -136,11 +136,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.txt_ignore_dirs.setMaximumHeight(60); self.txt_ignore_files.setMaximumHeight(60)
         s_v.addRow("Исключаемые директории (через запятую)", self.txt_ignore_dirs)
         s_v.addRow("Исключаемые файлы/паттерны (через запятую)", self.txt_ignore_files)
+
+        self.chk_include_collapsed = QtWidgets.QCheckBox()
+        self.chk_include_collapsed.setChecked(self.w.cfg.include_collapsed_in_dump)
+        s_v.addRow("Показывать свёрнутые в дампе", self.chk_include_collapsed)
+
+        # Кнопки применения/сохранения
         s_btns = QtWidgets.QHBoxLayout()
         self.btn_apply = QtWidgets.QPushButton("Применить")
         self.btn_save_defaults = QtWidgets.QPushButton("Сохранить по умолчанию")
         s_btns.addWidget(self.btn_apply); s_btns.addWidget(self.btn_save_defaults)
         s_v.addRow(s_btns)
+
+        # Тема: кнопка “солнышко-луна”
+        self.theme_btn = QtWidgets.QToolButton()
+        self.theme_btn.setCheckable(True)
+        self.theme_btn.setChecked(self.w.cfg.theme == "dark")
+        self.theme_btn.setText("🌙" if self.w.cfg.theme == "dark" else "☀️")
+        self.theme_btn.setToolTip("Переключить тему")
+        self.theme_btn.clicked.connect(self.toggle_theme)
+        s_v.addRow("Тема", self.theme_btn)
 
     def _connect_signals(self) -> None:
         self.path_edit.returnPressed.connect(self._rebuild_tree)
@@ -156,6 +171,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.btn_apply.clicked.connect(self.apply_settings)
         self.btn_save_defaults.clicked.connect(self.save_defaults_clicked)
+
+    # Palettes
+    def _apply_light_palette(self) -> None:
+        app = QtWidgets.QApplication.instance()
+        app.setPalette(app.style().standardPalette())
+
+    def _apply_dark_palette_now(self) -> None:
+        _apply_dark_palette(QtWidgets.QApplication.instance())
+
+    def toggle_theme(self) -> None:
+        new_theme = "dark" if self.w.cfg.theme == "light" else "light"
+        self.w.cfg.theme = new_theme
+        self.theme_btn.setChecked(new_theme == "dark")
+        self.theme_btn.setText("🌙" if new_theme == "dark" else "☀️")
+        if new_theme == "dark":
+            self._apply_dark_palette_now()
+        else:
+            self._apply_light_palette()
 
     # Tree helpers
     def _rebuild_tree(self) -> None:
@@ -316,6 +349,15 @@ class MainWindow(QtWidgets.QMainWindow):
             cfg.encoding = self.ed_encoding.text().strip() or "utf-8"
             cfg.errors_policy = self.combo_errors.currentText()
             cfg.output_format = self.format_combo.currentText()
+            cfg.include_collapsed_in_dump = self.chk_include_collapsed.isChecked()
+            
+            # тема берётся из состояния кнопки
+            cfg.theme = "dark" if self.theme_btn.isChecked() else "light"
+            if cfg.theme == "dark":
+                self._apply_dark_palette_now()
+            else:
+                self._apply_light_palette()
+
             def _split_csv(s: str) -> tuple[str, ...]:
                 return tuple([x.strip() for x in s.split(",") if x.strip()])
             cfg.ignore_dirs = _split_csv(self.txt_ignore_dirs.toPlainText())
@@ -327,8 +369,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def save_defaults_clicked(self) -> None:
         self.apply_settings()
         try:
+            # сохраняем актуальный конфиг
             save_defaults(self.w.cfg)
             QtWidgets.QMessageBox.information(self, "Сохранено", "Сохранено в ~/.project_dumper.json")
+            # применяем ещё раз из сохранённого значения
+            if self.w.cfg.theme == "dark":
+                self._apply_dark_palette_now()
+            else:
+                self._apply_light_palette()
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Ошибка", str(e))
 
@@ -336,6 +384,8 @@ class MainWindow(QtWidgets.QMainWindow):
 def run_app() -> None:
     import sys
     app = QtWidgets.QApplication(sys.argv)
-    _apply_dark_palette(app)
+    cfg = load_defaults()
+    if cfg.theme == "dark":
+        _apply_dark_palette(app)
     w = MainWindow(); w.show()
     app.exec()
