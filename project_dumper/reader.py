@@ -24,13 +24,19 @@ def read_text_streaming(p: Path, cfg: Config, chunk_size: int = 1024 * 64) -> It
         yield f"[SKIPPED: size {size} bytes > limit {cfg.max_file_size}]"
         return
     with p.open("rb") as fh:
-        head = fh.read(2048)
+        # читаем первый кусок: либо до 2048 байт, либо до указанного chunk_size,
+        # чтобы не получить отрицательную длину при маленьком chunk_size
+        first_read = 2048 if chunk_size <= 0 else min(2048, chunk_size)
+        head = fh.read(first_read)
         if is_binary_sample(head, cfg.binary_threshold):
             yield "[SKIPPED: binary content detected]"
             return
         # Определяем кодировку: сначала заданная, при неудаче — авто
         decoder_enc = cfg.encoding
-        data = head + fh.read(chunk_size - len(head))
+        rest_size = 0
+        if chunk_size > len(head):
+            rest_size = chunk_size - len(head)
+        data = head + (fh.read(rest_size) if rest_size > 0 else b"")
         # пробуем заданную
         try:
             text = data.decode(decoder_enc, errors=cfg.errors_policy)

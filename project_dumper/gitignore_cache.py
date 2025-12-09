@@ -31,7 +31,9 @@ class GitignoreCache:
             self.root, self.spec = root, None
             return
         gi_files = self._collect_gitignores(root)
-        if self.root != root or self._changed(gi_files):
+        # всегда обновляем снапшот и узнаём, менялся ли набор .gitignore
+        changed = self._changed(gi_files)
+        if self.root != root or changed:
             lines: list[str] = []
             for gi in gi_files:
                 base_rel = gi.parent.relative_to(root).as_posix() if gi.parent != root else ""
