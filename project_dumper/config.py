@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, asdict
+from typing import Literal
 from pathlib import Path
 import json
 
@@ -30,13 +31,21 @@ class Config:
     binary_threshold: float = 0.30
     detect_encoding: bool = True
     output_format: str = "txt"  # txt|md|json
-    theme: str = "light"        # light|dark
+    theme: Literal["light", "dark"] = "light"        # light|dark
     include_collapsed_in_dump: bool = True
-    
+
+    # Diff settings
+    # Модификатор, который должен быть зажат для копирования группы строк
+    # с одинаковым знаком (+/-). Допустимые значения: "Ctrl", "Shift",
+    # "Alt", "Ctrl+Shift".
+    diff_group_modifier: str = "Ctrl"
+    # Длительность анимации подсветки копируемых строк (мс).
+    diff_copy_flash_duration_ms: int = 300
+
 def load_defaults() -> Config:
     if RC_PATH.exists():
         try:
-            data = json.loads(RC_PATH.read_text(encoding="utf-8"))
+            data: dict[str, object] = json.loads(RC_PATH.read_text(encoding="utf-8"))
             cfg = Config()
             for k, v in data.items():
                 if hasattr(cfg, k):
