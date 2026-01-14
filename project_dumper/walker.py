@@ -110,7 +110,7 @@ class ScanThread(threading.Thread):
             files = self.w.iter_files(self.root)
             total = len(files)
             self.q.put(("total", total))
-            from .reader import read_text_streaming
+            from domain.fs.reader import read_text_streaming
             for i, p in enumerate(files, 1):
                 rel = p.relative_to(self.root).as_posix()
                 hide = any((p.is_relative_to(d) for d in self.collapsed)) if hasattr(p, "is_relative_to") \

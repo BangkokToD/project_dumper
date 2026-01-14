@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from project_dumper.config import Config
-from project_dumper.reader import is_binary_sample, read_text_streaming
+from domain.fs.reader import is_binary_sample, read_text_streaming
 
 
 def test_is_binary_sample_text() -> None:
