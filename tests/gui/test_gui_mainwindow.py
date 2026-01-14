@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import pytest
 from PyQt6 import QtWidgets
 
 from project_dumper.gui import MainWindow
+
+pytestmark = pytest.mark.gui
 
 
 def test_mainwindow_basic(qapp) -> None:
