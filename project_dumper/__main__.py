@@ -1,13 +1,12 @@
 """
 Точка входа для запуска пакета через `python -m project_dumper`.
 
-Пока что запускает GUI через существующий модуль `project_dumper.gui`.
-После переноса UI в слой presentation будет перенаправлено туда.
+Запускает GUI через слой presentation (presentation.ui).
 """
 
 from __future__ import annotations
 
-from project_dumper.gui import run_app
+from presentation.ui import run_app
 
 
 def main() -> None:
