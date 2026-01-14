@@ -1,56 +1,61 @@
 from __future__ import annotations
-import io, json
-from typing import Any
+"""
+DEPRECATED.
+
+Исторический форматтер DumpBuilder заменён на доменные форматтеры (domain.dump)
+и сервис ExportService (services.export_service).
+
+Оставлено временно для обратной совместимости импорта и минимального риска
+поломок в стороннем коде.
+"""
+
+import warnings
+
+from domain.models import DumpFile, OutputFormat, ScanResult
+from services.export_service import ExportService
 
 SEP = "====="
 
+
 class DumpBuilder:
+    """
+    DEPRECATED: совместимость с прежним incremental API.
+
+    Внутри аккумулирует ScanResult и на build() использует ExportService.
+    """
+
     def __init__(self, mode: str = "txt"):
-        self.mode = mode
-        if mode == "json":
-            self.obj = {"tree": "", "files": []}
-        else:
-            self.buf = io.StringIO()
-        # новый флаг: был ли уже выведен хоть один включённый файл
-        self._has_any_file = False
+        warnings.warn(
+            "DumpBuilder is deprecated; use ExportService/export formatters instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self._mode = (mode or "txt").strip().lower()
+        self._tree: str | None = None
+        self._files: list[DumpFile] = []
+        self._cur: DumpFile | None = None
 
-    def set_tree(self, tree: str):
-        if self.mode == "json":
-            self.obj["tree"] = tree
-        elif self.mode == "md":
-            self.buf.write("# Структура проекта\n\n```\n")
-            self.buf.write(tree)
-            self.buf.write("\n```\n\n")
-        else:
-            self.buf.write("Структура проекта\n\n")
-            self.buf.write(tree)
-            self.buf.write("\n\n")
+    def set_tree(self, tree: str) -> None:
+        self._tree = tree
 
-    def start_file(self, relpath: str):
-        if self.mode == "json":
-            self._cur = {"path": relpath, "content": ""}
-            self.obj["files"].append(self._cur)
-        else:
-            # печатаем SEP только перед не-первым включённым файлом
-            if self._has_any_file:
-                self.buf.write(SEP + "\n\n")
-            self._has_any_file = True
-            if self.mode == "md":
-                self.buf.write(f"## {relpath}\n\n")
-            else:
-                self.buf.write(relpath + "\n\n")
+    def start_file(self, relpath: str) -> None:
+        self._cur = DumpFile(path=relpath, content="", skipped_reason=None)
 
-    def add_chunk(self, s: str):
-        if self.mode == "json":
-            self._cur["content"] += s
-        else:
-            self.buf.write(s)
+    def add_chunk(self, s: str) -> None:
+        if self._cur is None:
+            return
+        self._cur.content = (self._cur.content or "") + s
 
-    def end_file(self, is_last: bool):
-        if self.mode in ("md","txt"):
-            self.buf.write("\n\n")
+    def end_file(self, is_last: bool) -> None:
+        if self._cur is None:
+            return
+        self._files.append(self._cur)
+        self._cur = None
 
     def build(self) -> str:
-        if self.mode == "json":
-            return json.dumps(self.obj, ensure_ascii=False, indent=2)
-        return self.buf.getvalue()
+        fmt = OutputFormat.TXT
+        if self._mode == "md":
+            fmt = OutputFormat.MD
+        elif self._mode == "json":
+            fmt = OutputFormat.JSON
+        return ExportService.export(ScanResult(tree=self._tree, files=self._files), fmt, include_tree=True)

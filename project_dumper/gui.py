@@ -5,7 +5,6 @@ import queue
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from .walker import Walker, ScanThread
-from .formatter import DumpBuilder
 from .config import load_defaults, save_defaults, Config
 from domain.diff.logic import (
     DiffLineType,
@@ -15,6 +14,8 @@ from domain.diff.logic import (
     get_group_indices,
     strip_for_copy,
 )
+from domain.models import DumpFile, OutputFormat, ScanResult
+from services.export_service import ExportService
 
 def _apply_dark_palette(app: QtWidgets.QApplication) -> None:
     app.setStyle("Fusion")
@@ -213,7 +214,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.excluded_files: set[Path] = set()
 
         self.q: "queue.Queue[tuple[str, object]]" = queue.Queue()
-        self.builder: DumpBuilder | None = None
+        self._scan_tree: str | None = None
+        self._scan_files: list[DumpFile] = []
+        self._cur_file: DumpFile | None = None
         self._total_files: int = 0
         self._file_index: int = 0
 
@@ -531,7 +534,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._rebuild_tree()
 
         self.w.cfg.output_format = self.format_combo.currentText()
-        self.builder = DumpBuilder(self.w.cfg.output_format)
+        self._scan_tree = None
+        self._scan_files = []
+        self._cur_file = None
         self.text.setPlainText("")
         self.progress.setRange(0, 0)
         self._total_files = 0; self._file_index = 0
@@ -547,24 +552,39 @@ class MainWindow(QtWidgets.QMainWindow):
             while True:
                 kind, payload = self.q.get_nowait()
                 if kind == "tree":
-                    self.builder.set_tree(payload)
+                    self._scan_tree = str(payload)
                 elif kind == "total":
                     self._total_files = int(payload)
                     self.progress.setRange(0, self._total_files if self._total_files > 0 else 1)
                 elif kind == "file_header":
                     self._file_index += 1
-                    self.builder.start_file(payload)
+                    self._cur_file = DumpFile(path=str(payload), content="", skipped_reason=None)
                 elif kind == "file_chunk":
-                    self.builder.add_chunk(payload)
+                    if self._cur_file is not None:
+                        self._cur_file.content = (self._cur_file.content or "") + str(payload)
                 elif kind == "file_skipped":
-                    self.builder.add_chunk(payload)  # «Содержимое скрыто»
+                    if self._cur_file is not None:
+                        self._cur_file.content = None
+                        self._cur_file.skipped_reason = str(payload)
                 elif kind == "file_sep":
-                    last = (self._file_index == (self._total_files or self._file_index))
-                    self.builder.end_file(is_last=last)
+                    if self._cur_file is not None:
+                        # Зафиксировать файл, только если он реально был начат (header пришёл)
+                        self._scan_files.append(self._cur_file)
+                        self._cur_file = None
                 elif kind == "progress":
                     self.progress.setValue(int(payload))
                 elif kind == "done":
-                    self.text.setPlainText(self.builder.build())
+                    fmt_raw = (self.w.cfg.output_format or "txt").strip().lower()
+                    fmt = OutputFormat.TXT
+                    if fmt_raw == "md":
+                        fmt = OutputFormat.MD
+                    elif fmt_raw == "json":
+                        fmt = OutputFormat.JSON
+
+                    include_tree = True  # текущий UI всегда показывает дерево (режимы изменим позже)
+                    result = ScanResult(tree=self._scan_tree, files=self._scan_files)
+                    rendered = ExportService.export(result=result, format=fmt, include_tree=include_tree)
+                    self.text.setPlainText(rendered)
                     self.progress.setValue(self.progress.maximum()); self.timer.stop()
                 elif kind == "error":
                     QtWidgets.QMessageBox.critical(self, "Ошибка", str(payload)); self.timer.stop()
