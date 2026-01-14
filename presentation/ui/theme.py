@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from PyQt6 import QtGui, QtWidgets
 
+# NOTE:
+# Иконки живут в presentation.ui.icons и применяются там.
+# Здесь оставляем только палитры.
+
 
 def apply_dark_palette(app: QtWidgets.QApplication) -> None:
     """

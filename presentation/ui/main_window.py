@@ -12,6 +12,7 @@ from domain.diff.logic import get_group_indices, strip_for_copy, detect_diff_blo
 from domain.models import DumpFile, OutputFormat, ScanResult
 from services.export_service import ExportService
 from presentation.ui.diff_highlighter import DiffHighlighter
+from presentation.ui.icons import apply_app_icon
 from presentation.ui.theme import apply_dark_palette, apply_light_palette
 
 
@@ -274,6 +275,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if self.diff_highlighter is not None:
             self.diff_highlighter.rehighlight()
+
+        # Иконка должна меняться без перезапуска.
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            apply_app_icon(app=app, window=self, theme=new_theme)
 
     def _rebuild_tree(self) -> None:
         path_str = self.path_edit.text().strip()

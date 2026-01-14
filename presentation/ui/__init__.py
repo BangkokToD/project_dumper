@@ -5,6 +5,7 @@ from PyQt6 import QtWidgets
 
 from project_dumper.config import Config, load_defaults
 from presentation.ui.main_window import MainWindow
+from presentation.ui.icons import apply_app_icon, ensure_icons_exist
 from presentation.ui.theme import apply_dark_palette, apply_light_palette
 
 __all__ = [
@@ -23,6 +24,10 @@ def run_app() -> None:
     - применение палитры.
     """
     app = QtWidgets.QApplication(sys.argv)
+    # ВАЖНО: для Linux DE (GNOME/KDE/Wayland)
+    app.setApplicationName("ProjectDumper")
+    app.setOrganizationName("ProjectDumper")
+    app.setDesktopFileName("project-dumper")
 
     def _import_prompt(decision) -> bool:
         text = (
@@ -45,6 +50,10 @@ def run_app() -> None:
     else:
         apply_light_palette(app)
 
+    # Иконки: гарантируем наличие PNG и применяем иконку под текущую тему.
+    ensure_icons_exist()
+
     w = MainWindow(cfg=cfg)
+    apply_app_icon(app=app, window=w, theme=cfg.theme)
     w.show()
     app.exec()
