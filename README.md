@@ -220,12 +220,59 @@ pip install -r requirements.txt
 
 ---
 
-# ▶ Run
+# ⚡ Quick Start
 
-## Option 1 — module-based:
+The recommended way is to use a virtual environment with **Python 3.12**.
+
+## 1. Create virtual environment
+
+Make sure Python 3.12 is installed:
 
 ```bash
-python -m project_dumper.main
+python3.12 --version
+```
+
+Create a virtual environment:
+
+```bash
+python3.12 -m venv .venv
+```
+
+Activate it:
+
+```bash
+source .venv/bin/activate
+```
+
+## 2. Install dependencies
+
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+## 3. Verify
+
+Run the application:
+
+```bash
+python -m project_dumper
+```
+
+Run tests:
+
+```bash
+python -m pytest -q
+```
+
+---
+
+# ▶ Run
+
+## Option 1 — module-based (recommended):
+
+```bash
+python -m project_dumper
 ```
 
 ## Option 2 — via main.py:
@@ -477,12 +524,59 @@ pip install -r requirements.txt
 
 ---
 
-# ▶ Запуск
+# ⚡ Быстрый старт
 
-## Вариант 1 — модульный:
+Рекомендуемый способ — использовать виртуальное окружение с **Python 3.12**.
+
+## 1. Создание виртуального окружения
+
+Убедись, что Python 3.12 установлен:
 
 ```bash
-python -m project_dumper.main
+python3.12 --version
+```
+
+Создай виртуальное окружение:
+
+```bash
+python3.12 -m venv .venv
+```
+
+Активируй его:
+
+```bash
+source .venv/bin/activate
+```
+
+## 2. Установка зависимостей
+
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+## 3. Проверка
+
+Запуск приложения:
+
+```bash
+python -m project_dumper
+```
+
+Запуск тестов:
+
+```bash
+python -m pytest -q
+```
+
+---
+
+# ▶ Запуск
+
+## Вариант 1 — модульный (рекомендуемый):
+
+```bash
+python -m project_dumper
 ```
 
 ## Вариант 2 — через main.py:
