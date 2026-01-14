@@ -1,15 +1,25 @@
 #!/bin/sh
 set -eu
+
+# ВАЖНО: не используем внешние утилиты (dirname/readlink),
+# чтобы не ловить несовместимость libc из-за LD_LIBRARY_PATH.
+APPDIR="${0%/*}"
+if [ "$APPDIR" = "$0" ]; then
+  APPDIR="."
+fi
+APPDIR="$(cd "$APPDIR" && pwd)"
+
 export PROJECT_DUMPER_DEFAULT_THEME="light"
-# AppImage должен быть portable-only: не читаем ~/.project_dumper.json
 export PROJECT_DUMPER_PORTABLE_ONLY="1"
-# В AppImage чаще всего стабильнее принудительно использовать XCB:
-# - убираем зависимость от wayland shell integration
-# - на Wayland работает через XWayland
+
+# Стабильный запуск на большинстве окружений (включая Wayland через XWayland)
 export QT_QPA_PLATFORM="xcb"
-# Qt: указываем пути плагинов явно.
-export QT_PLUGIN_PATH="$(dirname "$0")/usr/bin/_internal/PyQt6/Qt6/plugins"
-export QT_QPA_PLATFORM_PLUGIN_PATH="$(dirname "$0")/usr/bin/platforms"
-# Даем загрузчику найти доложенные .so зависимости плагинов (xcb/wayland и т.п.)
-export LD_LIBRARY_PATH="$(dirname "$0")/usr/lib:$(dirname "$0")/usr/bin/_internal:${LD_LIBRARY_PATH:-}"
-exec "$(dirname "$0")/usr/bin/ProjectDumper" "$@"
+
+# Qt плагины/платформы лежат внутри AppImage
+export QT_PLUGIN_PATH="$APPDIR/usr/bin/_internal/PyQt6/Qt6/plugins"
+export QT_QPA_PLATFORM_PLUGIN_PATH="$APPDIR/usr/bin/platforms"
+
+# Библиотеки, которые мы докладываем в AppDir/usr/lib (xcb/wayland зависимости и т.п.)
+export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/bin/_internal:${LD_LIBRARY_PATH:-}"
+
+exec "$APPDIR/usr/bin/ProjectDumper" "$@"
