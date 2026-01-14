@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from project_dumper.diff_logic import (
+from domain.diff.logic import (
     DiffLineType,
     classify_line,
     detect_diff_block_indices,

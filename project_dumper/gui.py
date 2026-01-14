@@ -7,7 +7,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from .walker import Walker, ScanThread
 from .formatter import DumpBuilder
 from .config import load_defaults, save_defaults, Config
-from .diff_logic import (
+from domain.diff.logic import (
     DiffLineType,
     classify_line,
     detect_diff_block_indices,
