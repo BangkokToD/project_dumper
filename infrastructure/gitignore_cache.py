@@ -11,7 +11,9 @@ class GitignoreCache:
     def __init__(self) -> None:
         self.root: Optional[Path] = None
         self.spec: Optional[PathSpec] = None
-        self._snapshot: dict[Path, float] = {}
+        # Снапшот состояния .gitignore файлов.
+        # Храним (mtime_ns, size), чтобы не зависеть от низкой точности mtime в CI/FS.
+        self._snapshot: dict[Path, tuple[int, int]] = {}
 
     def _collect_gitignores(self, root: Path) -> list[Path]:
         out = []
@@ -20,7 +22,11 @@ class GitignoreCache:
         return out
 
     def _changed(self, files: list[Path]) -> bool:
-        cur = {p: p.stat().st_mtime for p in files}
+        cur: dict[Path, tuple[int, int]] = {}
+        for p in files:
+            st = p.stat()
+            # mtime_ns даёт максимальную доступную точность, size страхует от совпадений по времени
+            cur[p] = (int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000))), int(st.st_size))
         if cur != self._snapshot:
             self._snapshot = cur
             return True
