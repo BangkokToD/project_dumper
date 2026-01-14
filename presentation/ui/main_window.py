@@ -5,6 +5,7 @@ import queue
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+from project_dumper import __version__
 from project_dumper.config import load_defaults, save_defaults, Config
 from project_dumper.walker import Walker, ScanThread
 
@@ -19,7 +20,7 @@ from presentation.ui.theme import apply_dark_palette, apply_light_palette
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, cfg: Config | None = None):
         super().__init__()
-        self.setWindowTitle("Project Dumper")
+        self.setWindowTitle(f"Project Dumper v{__version__}")
         self.resize(1200, 720)
 
         self.w = Walker()

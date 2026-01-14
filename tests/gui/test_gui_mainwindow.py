@@ -4,6 +4,7 @@ import pytest
 from PyQt6 import QtWidgets
 
 from project_dumper.gui import MainWindow
+from project_dumper import __version__
 
 pytestmark = pytest.mark.gui
 
@@ -12,6 +13,8 @@ def test_mainwindow_basic(qapp) -> None:
     # просто проверяем, что окно создаётся без ошибок
     w = MainWindow()
     assert isinstance(w, QtWidgets.QMainWindow)
+    # Заголовок содержит версию
+    assert f"v{__version__}" in w.windowTitle()
 
 
 def test_mainwindow_has_diff_tab(qapp) -> None:
