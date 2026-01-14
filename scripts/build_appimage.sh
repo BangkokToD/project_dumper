@@ -182,6 +182,23 @@ stage_shared_libs_for_platform_plugins() {
 
   need_cmd ldd
 
+  should_skip_lib() {
+    # Не бандлим базовые системные библиотеки (особенно glibc).
+    # Иначе AppImage ломается на других дистрибутивах/версиях glibc (например, Arch).
+    case "$1" in
+      libc.so.6) return 0 ;;
+      ld-linux*.so*|ld-musl-*.so*) return 0 ;;
+      libpthread.so.0) return 0 ;;
+      libdl.so.2) return 0 ;;
+      librt.so.1) return 0 ;;
+      libm.so.6) return 0 ;;
+      libgcc_s.so.1) return 0 ;;
+      libstdc++.so.6) return 0 ;;
+      linux-vdso.so.1) return 0 ;;
+    esac
+    return 1
+  }
+
   # Собираем зависимости всех platform plugins.
   # Копируем только те, что:
   #   - имеют абсолютный путь (/usr/lib/..),
@@ -201,6 +218,9 @@ stage_shared_libs_for_platform_plugins() {
         if [[ "${rhs}" == /* && -f "${rhs}" ]]; then
           local base
           base="$(basename "${rhs}")"
+          if should_skip_lib "${base}"; then
+            continue
+          fi
           if [[ ! -f "${libdir}/${base}" ]]; then
             cp -a "${rhs}" "${libdir}/${base}"
           fi

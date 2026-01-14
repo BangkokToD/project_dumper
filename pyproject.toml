@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "project-dumper"
-version = "0.1.4"
+version = "0.1.5"
 description = "Project Dumper — PyQt6 tool to dump project tree, file contents, and view diffs."
 readme = "README.md"
 requires-python = ">=3.12"
