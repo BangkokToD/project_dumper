@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import queue
 import threading
 from pathlib import Path
 
@@ -136,50 +135,37 @@ class ScanThread(threading.Thread):
 
     def run(self) -> None:
         try:
+            # конфиг, как и раньше, берём через load_cfg
             self.w.load_cfg(self.root)
+
             opts = ScanOptions(
                 collapsed_dirs=set(self.collapsed),
                 excluded_files=set(self.excluded),
                 ignore_collapsed=False,
             )
-            tree = self.w.build_tree(self.root, opts)
-            self.q.put(("tree", tree))
+
+            from services.scan_service import ScanService
+
+            res = ScanService.scan(self.root, self.w.cfg, opts)
+            self.q.put(("tree", res.tree or ""))
 
             if self.only_tree:
                 self.q.put(("done", None))
                 return
 
-            files = self.w.iter_files(self.root)
-            total = len(files)
+            total = len(res.files)
             self.q.put(("total", total))
 
-            from domain.fs.reader import read_text_streaming
-
-            for i, p in enumerate(files, 1):
-                rel = p.relative_to(self.root).as_posix()
-                hide = (
-                    any((p.is_relative_to(d) for d in self.collapsed))
-                    if hasattr(p, "is_relative_to")
-                    else any(str(p).startswith(str(d)) for d in self.collapsed)
-                )
-
-                if p in self.excluded:
-                    self.q.put(("progress", i))
-                    continue
-
-                if hide and not self.w.cfg.include_collapsed_in_dump:
-                    self.q.put(("progress", i))
-                    continue
-
-                self.q.put(("file_header", rel))
-                if hide:
-                    self.q.put(("file_skipped", "Содержимое скрыто"))
+            for i, f in enumerate(res.files, 1):
+                self.q.put(("file_header", f.path))
+                if f.content is None:
+                    self.q.put(("file_skipped", f.skipped_reason or ""))
                 else:
-                    for chunk in read_text_streaming(p, self.w.cfg):
-                        self.q.put(("file_chunk", chunk))
+                    self.q.put(("file_chunk", f.content))
                 self.q.put(("file_sep", None))
                 self.q.put(("progress", i))
 
             self.q.put(("done", None))
+
         except Exception as e:
             self.q.put(("error", str(e)))
