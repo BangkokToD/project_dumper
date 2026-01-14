@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-dumper"
+version = "0.1.0"
+description = "Project Dumper — PyQt6 tool to dump project tree, file contents, and view diffs."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Bangkok" }]
+
+dependencies = [
+  "PyQt6>=6.6.0",
+  "pathspec>=0.12.1",
+  "charset-normalizer>=3.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["project_dumper*", "presentation*"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+filterwarnings = [
+  "ignore::DeprecationWarning",
+  "ignore::PendingDeprecationWarning",
+]

@@ -1,3 +1,10 @@
+# DEPRECATED
+# Этот файл оставлен временно для обратной совместимости.
+# Используй pyproject.toml:
+#   pip install -e ".[dev]"
+#
+# На следующих коммитах requirements.txt будет удалён.
+#
 PyQt6>=6.6.0
 pathspec>=0.12.1
 charset-normalizer>=3.3.0

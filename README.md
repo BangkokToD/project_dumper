@@ -247,8 +247,9 @@ source .venv/bin/activate
 ## 2. Install dependencies
 
 ```bash
-pip install --upgrade pip
-pip install -r requirements.txt
+pip install -U pip
+# Install the project and developer dependencies from pyproject.toml
+pip install -e ".[dev]"
 ```
 
 ## 3. Verify
@@ -551,8 +552,9 @@ source .venv/bin/activate
 ## 2. Установка зависимостей
 
 ```bash
-pip install --upgrade pip
-pip install -r requirements.txt
+pip install -U pip
+# установка проекта и dev-зависимостей из pyproject.toml
+pip install -e ".[dev]"
 ```
 
 ## 3. Проверка
