@@ -1,9 +1,10 @@
 from __future__ import annotations
-import os, fnmatch, threading, queue
+import fnmatch, threading, queue
 from pathlib import Path
 from typing import Iterable
 from .config import Config, load_defaults
-from .gitignore_cache import GitignoreCache
+from infrastructure.gitignore_cache import GitignoreCache
+from infrastructure import filesystem
 
 class Walker:
     def __init__(self) -> None:
@@ -41,7 +42,7 @@ class Walker:
         return False
 
     def list_entries(self, dir_path: Path) -> list[Path]:
-        entries = [p for p in dir_path.iterdir() if (self.cfg.follow_symlinks or not p.is_symlink())]
+        entries = [p for p in filesystem.iterdir(dir_path) if (self.cfg.follow_symlinks or not p.is_symlink())]
         out = []
         for p in entries:
             if p.is_dir():
@@ -78,7 +79,7 @@ class Walker:
         
     def iter_files(self, root: Path) -> list[Path]:
         files: list[Path] = []
-        for dirpath, dirnames, filenames in os.walk(root, followlinks=self.cfg.follow_symlinks):
+        for dirpath, dirnames, filenames in filesystem.walk(root, followlinks=self.cfg.follow_symlinks):
             d = Path(dirpath)
             dirnames[:] = [n for n in dirnames if not self.skip_dir(d / n)]
             for f in filenames:

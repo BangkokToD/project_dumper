@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from project_dumper.gitignore_cache import GitignoreCache
+from infrastructure.gitignore_cache import GitignoreCache
 
 
 def test_gitignore_cache_ignored(tmp_path: Path) -> None:
