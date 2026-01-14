@@ -28,6 +28,10 @@ def apply_dark_palette(app: QtWidgets.QApplication) -> None:
     p.setColor(QtGui.QPalette.ColorRole.Text, text)
     p.setColor(QtGui.QPalette.ColorRole.Button, alt)
     p.setColor(QtGui.QPalette.ColorRole.ButtonText, text)
+
+    # Placeholder text (иначе в тёмной теме становится чёрным)
+    p.setColor(QtGui.QPalette.ColorRole.PlaceholderText, QtGui.QColor(150, 150, 150))
+
     p.setColor(QtGui.QPalette.ColorRole.Highlight, highlight)
     p.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor(255, 255, 255))
     p.setColor(QtGui.QPalette.ColorGroup.Disabled, QtGui.QPalette.ColorRole.Text, disabled)
