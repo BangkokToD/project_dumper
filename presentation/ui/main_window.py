@@ -397,6 +397,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.collapsed_dirs,
             self.excluded_files,
             ignore_collapsed=ignore_collapsed,
+            ignore_manual_excluded=bool(ignore_collapsed),
         )
         thr.start()
         if not self.timer.isActive():

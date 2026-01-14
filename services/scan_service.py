@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Set
 
 from domain.fs.reader import read_text_streaming
 from domain.fs.walker import Walker
@@ -21,11 +20,11 @@ class ScanService:
         """
         Просканировать проект и вернуть результат.
 
-        Поведение на текущем этапе сохраняем совместимым со старым ScanThread:
+        Commit 13 (по ТЗ):
         - excluded_files: пропускаются полностью (без заголовка/без записи в результате)
-        - collapsed_dirs:
-            * если cfg.include_collapsed_in_dump == False -> файлы под collapsed пропускаются полностью
-            * если cfg.include_collapsed_in_dump == True -> файл добавляется, но content=None и skipped_reason="Содержимое скрыто"
+        - collapsed_dirs в обычном режиме: полностью исключаются из дерева дампа и из файлов дампа
+        - ignore_collapsed: collapsed_dirs игнорируются при построении дерева дампа и при сборе файлов дампа
+        - строка "Содержимое скрыто" полностью удаляется из pipeline
 
         Args:
             root: Корневая директория проекта.
@@ -44,24 +43,22 @@ class ScanService:
         files_paths = w.iter_files(root)
         out_files: list[DumpFile] = []
 
-        collapsed_dirs: Set[Path] = set(options.collapsed_dirs)
+        collapsed_dirs = set(options.collapsed_dirs)
         if options.ignore_collapsed:
             collapsed_dirs = set()
 
         for p in files_paths:
-            if p in options.excluded_files:
+            # В режиме "игнорировать" показываем файлы, скрытые вручную (excluded_files)
+            if (not options.ignore_manual_excluded) and (p in options.excluded_files):
                 continue
 
             hide = _is_under_any(p, collapsed_dirs)
 
-            if hide and not cfg.include_collapsed_in_dump:
+            # Commit 13: collapsed -> полный exclude, без "Содержимое скрыто"
+            if hide:
                 continue
 
             rel = p.relative_to(root).as_posix()
-
-            if hide:
-                out_files.append(DumpFile(path=rel, content=None, skipped_reason="Содержимое скрыто"))
-                continue
 
             content = "".join(read_text_streaming(p, cfg))
             out_files.append(DumpFile(path=rel, content=content, skipped_reason=None))

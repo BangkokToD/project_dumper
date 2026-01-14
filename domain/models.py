@@ -44,6 +44,7 @@ class ScanOptions:
     collapsed_dirs: set[Path] = field(default_factory=set)
     excluded_files: set[Path] = field(default_factory=set)
     ignore_collapsed: bool = False
+    ignore_manual_excluded: bool = False
 
 
 @dataclass(slots=True)

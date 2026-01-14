@@ -70,8 +70,11 @@ class Walker:
         options = options or ScanOptions()
         collapsed = options.collapsed_dirs
         excluded = options.excluded_files
-        # Режим "игнорировать сворачивание": collapsed не влияет ни на дерево, ни на дамп.
-        # Политику "collapsed всегда exclude" внедрим позже отдельным коммитом.
+
+        # В режиме "игнорировать" показываем файлы, скрытые вручную (excluded_files)
+        if options.ignore_manual_excluded:
+            excluded = set()
+        # Режим "игнорировать сворачивание": collapsed не влияет на построение дерева дампа.
         if options.ignore_collapsed:
             collapsed = set()
 
@@ -93,10 +96,12 @@ class Walker:
                 lines.append(prefix + branch + p.name)
                 if p.is_dir():
                     ext = prefix + ("    " if last else "│   ")
+                    # Commit 13: collapsed в обычном режиме = полный exclude содержимого
+                    # (папка видна, внутрь не заходим, но в правом дереве должен быть "…").
                     if p in collapsed:
                         lines.append(ext + "…")
-                    else:
-                        rec(p, ext)
+                        continue
+                    rec(p, ext)
 
         lines.append(root.name + "/")
         rec(root)
@@ -130,6 +135,7 @@ class ScanThread(threading.Thread):
         collapsed_dirs: set[Path],
         excluded_files: set[Path],
         ignore_collapsed: bool,
+        ignore_manual_excluded: bool,
     ):
         super().__init__(daemon=True)
         self.root = root
@@ -138,6 +144,7 @@ class ScanThread(threading.Thread):
         self.collapsed = collapsed_dirs
         self.excluded = excluded_files
         self.ignore_collapsed = ignore_collapsed
+        self.ignore_manual_excluded = ignore_manual_excluded
 
     def run(self) -> None:
         try:
@@ -148,6 +155,7 @@ class ScanThread(threading.Thread):
                 collapsed_dirs=set(self.collapsed),
                 excluded_files=set(self.excluded),
                 ignore_collapsed=bool(self.ignore_collapsed),
+                ignore_manual_excluded=bool(self.ignore_manual_excluded),
             )
 
             from services.scan_service import ScanService

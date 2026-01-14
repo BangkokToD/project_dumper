@@ -35,27 +35,34 @@ def test_scan_service_excluded_files_are_not_returned(sample_project_tree: Path)
     assert "README.md" not in paths
 
 
-def test_scan_service_collapsed_skipped_reason(sample_project_tree: Path) -> None:
+def test_scan_service_ignore_manual_excluded_includes_files_back(sample_project_tree: Path) -> None:
     cfg = Config()
-    cfg.include_collapsed_in_dump = True
+    opts = ScanOptions(
+        excluded_files={sample_project_tree / "README.md"},
+        ignore_manual_excluded=True,
+    )
+    res = ScanService.scan(sample_project_tree, cfg, opts)
+    paths = {f.path for f in res.files}
+    assert "README.md" in paths
+
+
+def test_scan_service_collapsed_is_excluded(sample_project_tree: Path) -> None:
+    cfg = Config()
 
     collapsed_dir = sample_project_tree / "src"
     opts = ScanOptions(collapsed_dirs={collapsed_dir})
 
     res = ScanService.scan(sample_project_tree, cfg, opts)
-    # Внутри src файлы должны быть помечены как скрытые, но присутствовать
-    src_files = [f for f in res.files if f.path.startswith("src/")]
-    assert src_files, "Expected files under collapsed dir to exist in result"
-    assert all(f.content is None and f.skipped_reason == "Содержимое скрыто" for f in src_files)
-
-
-def test_scan_service_collapsed_fully_skipped_when_flag_off(sample_project_tree: Path) -> None:
-    cfg = Config()
-    cfg.include_collapsed_in_dump = False
-
-    collapsed_dir = sample_project_tree / "src"
-    opts = ScanOptions(collapsed_dirs={collapsed_dir})
-
-    res = ScanService.scan(sample_project_tree, cfg, opts)
-    # Внутри src файлы должны быть полностью исключены
+    # Commit 13: collapsed -> полностью исключены
     assert not any(f.path.startswith("src/") for f in res.files)
+
+
+def test_scan_service_ignore_collapsed_includes_files_back(sample_project_tree: Path) -> None:
+    cfg = Config()
+
+    collapsed_dir = sample_project_tree / "src"
+    opts = ScanOptions(collapsed_dirs={collapsed_dir}, ignore_collapsed=True)
+
+    res = ScanService.scan(sample_project_tree, cfg, opts)
+    # Commit 13: ignore_collapsed -> файлы возвращаются обратно
+    assert any(f.path.startswith("src/") for f in res.files)
