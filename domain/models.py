@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 
@@ -39,6 +41,9 @@ class ScanOptions:
     """
 
     output_format: OutputFormat = OutputFormat.TXT
+    collapsed_dirs: set[Path] = field(default_factory=set)
+    excluded_files: set[Path] = field(default_factory=set)
+    ignore_collapsed: bool = False
 
 
 @dataclass(slots=True)

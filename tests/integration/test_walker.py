@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from project_dumper.config import Config
-from project_dumper.walker import Walker
+from domain.fs.walker import Walker
+from domain.models import ScanOptions
 
 
 def test_skip_dir_and_file(sample_project_tree: Path) -> None:
@@ -35,7 +36,7 @@ def test_list_entries_orders_dirs_first(sample_project_tree: Path) -> None:
 def test_build_tree(sample_project_tree: Path) -> None:
     w = Walker()
     w.cfg = Config()
-    tree = w.build_tree(sample_project_tree)
+    tree = w.build_tree(sample_project_tree, ScanOptions())
     # верхняя строка — имя корня с '/'
     lines = tree.splitlines()
     assert lines[0].endswith("/"), lines[0]
