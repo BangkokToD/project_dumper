@@ -201,13 +201,13 @@ def _apply_light_palette(app: QtWidgets.QApplication) -> None:
     app.setPalette(p)
 
 class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self):
+    def __init__(self, cfg: Config | None = None):
         super().__init__()
         self.setWindowTitle("Project Dumper")
         self.resize(1200, 720)
 
         self.w = Walker()
-        self.w.cfg = load_defaults()
+        self.w.cfg = cfg or load_defaults()
 
         self.root_path: Path | None = None
         self.collapsed_dirs: set[Path] = set()
@@ -845,7 +845,24 @@ class MainWindow(QtWidgets.QMainWindow):
 def run_app() -> None:
     import sys
     app = QtWidgets.QApplication(sys.argv)
-    cfg: Config = load_defaults()
+
+    def _import_prompt(decision) -> bool:
+        """
+        UI-hook: спросить, импортировать ли конфиг из HOME в portable.
+        """
+        text = (
+            "Найден конфиг в HOME, но portable-конфиг рядом с приложением отсутствует.\n\n"
+            "Импортировать настройки в portable (скопировать HOME → portable)?"
+        )
+        btn = QtWidgets.QMessageBox.question(
+            None,
+            "Импорт настроек",
+            text,
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+        )
+        return btn == QtWidgets.QMessageBox.StandardButton.Yes
+
+    cfg: Config = load_defaults(import_prompt=_import_prompt)
 
     # Явно применяем палитру в зависимости от конфигурации, не полагаясь на системную тему.
     if cfg.theme == "dark":
@@ -853,6 +870,6 @@ def run_app() -> None:
     else:
         _apply_light_palette(app)
 
-    w = MainWindow()
+    w = MainWindow(cfg=cfg)
     w.show()
     app.exec()
