@@ -18,7 +18,7 @@ class Walker:
     На текущем этапе:
     - правила игнора вынесены в domain.fs.rules;
     - build_tree принимает ScanOptions (API-задел);
-    - collapsed пока работает как раньше (папка -> "…"), без политики "полностью исключать".
+    - collapsed: папка видна, содержимое заменяется на "…"; в ignore_collapsed папка разворачивается.
     """
 
     def __init__(self) -> None:
@@ -60,12 +60,10 @@ class Walker:
         """
         Построить дерево проекта.
 
-        Требования этапа:
-        - принимать ScanOptions (collapsed/excluded/ignore_collapsed);
-        - уметь выводить "…" для пустых папок (после фильтров).
-
-        ВАЖНО: политика collapsed "полностью исключаем" пока не внедряется —
-        API подготовлено, но поведение оставляем совместимым: collapsed -> "…".
+        Актуальные правила:
+        - collapsed dirs в дереве видны, но их содержимое заменяется на "…";
+        - в режиме ignore_collapsed collapsed не влияет на дерево;
+        - если директория пуста после фильтров -> "…".
         """
         options = options or ScanOptions()
         collapsed = options.collapsed_dirs
@@ -74,7 +72,7 @@ class Walker:
         # В режиме "игнорировать" показываем файлы, скрытые вручную (excluded_files)
         if options.ignore_manual_excluded:
             excluded = set()
-        # Режим "игнорировать сворачивание": collapsed не влияет на построение дерева дампа.
+        # Режим "игнорировать сворачивание": collapsed не влияет на построение дерева.
         if options.ignore_collapsed:
             collapsed = set()
 
@@ -96,8 +94,7 @@ class Walker:
                 lines.append(prefix + branch + p.name)
                 if p.is_dir():
                     ext = prefix + ("    " if last else "│   ")
-                    # Commit 13: collapsed в обычном режиме = полный exclude содержимого
-                    # (папка видна, внутрь не заходим, но в правом дереве должен быть "…").
+                    # Collapsed: папка видна, но содержимое заменяем на "…".
                     if p in collapsed:
                         lines.append(ext + "…")
                         continue
@@ -134,6 +131,7 @@ class ScanThread(threading.Thread):
         queue_out: "queue.Queue[tuple[str, object]]",
         collapsed_dirs: set[Path],
         excluded_files: set[Path],
+        mode,
         ignore_collapsed: bool,
         ignore_manual_excluded: bool,
     ):
@@ -143,6 +141,7 @@ class ScanThread(threading.Thread):
         self.q = queue_out
         self.collapsed = collapsed_dirs
         self.excluded = excluded_files
+        self.mode = mode
         self.ignore_collapsed = ignore_collapsed
         self.ignore_manual_excluded = ignore_manual_excluded
 
@@ -152,6 +151,7 @@ class ScanThread(threading.Thread):
             self.w.load_cfg(self.root)
 
             opts = ScanOptions(
+                mode=self.mode,
                 collapsed_dirs=set(self.collapsed),
                 excluded_files=set(self.excluded),
                 ignore_collapsed=bool(self.ignore_collapsed),

@@ -10,7 +10,7 @@ from project_dumper.config import load_defaults, save_defaults, Config
 from project_dumper.walker import Walker, ScanThread
 
 from domain.diff.logic import get_group_indices, strip_for_copy, detect_diff_block_indices
-from domain.models import DumpFile, OutputFormat, ScanResult
+from domain.models import DumpFile, OutputFormat, ScanMode, ScanResult
 from services.export_service import ExportService
 from presentation.ui.diff_highlighter import DiffHighlighter
 from presentation.ui.icons import apply_app_icon
@@ -22,6 +22,8 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.setWindowTitle(f"Project Dumper v{__version__}")
         self.resize(1200, 720)
+        # Даем возможность сжимать окно без “боли”: не ставим жёсткие минимумы на крупные зоны.
+        self.setMinimumSize(520, 360)
 
         self.w = Walker()
         self.w.cfg = cfg or load_defaults()
@@ -31,9 +33,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.excluded_files: set[Path] = set()
 
         # UX flags
-        self.only_files_chk: QtWidgets.QCheckBox | None = None
         self.scan_btn_normal: QtWidgets.QPushButton | None = None
         self.scan_btn_ignore_collapsed: QtWidgets.QPushButton | None = None
+        self.mode_tree_files: QtWidgets.QRadioButton | None = None
+        self.mode_only_files: QtWidgets.QRadioButton | None = None
+        self.mode_only_tree: QtWidgets.QRadioButton | None = None
 
         self.q: "queue.Queue[tuple[str, object]]" = queue.Queue()
         self._scan_tree: str | None = None
@@ -63,6 +67,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.timer.setInterval(50)
         self.timer.timeout.connect(self._pump_queue)
 
+    def _current_scan_mode(self) -> ScanMode:
+        """
+        Получить текущий режим сканирования по радиокнопкам.
+        """
+        if self.mode_only_files is not None and self.mode_only_files.isChecked():
+            return ScanMode.ONLY_FILES
+        if self.mode_only_tree is not None and self.mode_only_tree.isChecked():
+            return ScanMode.ONLY_TREE
+        return ScanMode.TREE_AND_FILES
+
     def _build_ui(self) -> None:
         tabs = QtWidgets.QTabWidget(self)
         self.setCentralWidget(tabs)
@@ -77,8 +91,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.path_edit.setPlaceholderText("Абсолютный путь к проекту")
         top.addWidget(QtWidgets.QLabel("Проект:"))
         top.addWidget(self.path_edit, 1)
-        self.only_files_chk = QtWidgets.QCheckBox("Сканировать только файлы (без дерева)")
-        top.addWidget(self.only_files_chk)
+
+        # Режим скана (3 радиокнопки)
+        mode_box = QtWidgets.QWidget()
+        mode_layout = QtWidgets.QHBoxLayout(mode_box)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        self.mode_tree_files = QtWidgets.QRadioButton("Дерево+файлы")
+        self.mode_only_files = QtWidgets.QRadioButton("Только файлы")
+        self.mode_only_tree = QtWidgets.QRadioButton("Только дерево")
+        self.mode_tree_files.setChecked(True)
+        mode_layout.addWidget(self.mode_tree_files)
+        mode_layout.addWidget(self.mode_only_files)
+        mode_layout.addWidget(self.mode_only_tree)
+        top.addWidget(mode_box)
+
         top.addWidget(QtWidgets.QLabel("Формат:"))
         self.format_combo = QtWidgets.QComboBox()
         self.format_combo.addItems(["txt", "md", "json"])
@@ -95,12 +121,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.scan_btn_normal.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
         )
-        self.scan_btn_normal.setMinimumWidth(220)
         top.addWidget(self.scan_btn_ignore_collapsed)
         top.addWidget(self.scan_btn_normal)
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         v.addWidget(splitter, 1)
+        splitter.setChildrenCollapsible(True)
+        splitter.setHandleWidth(6)
 
         left = QtWidgets.QWidget()
         splitter.addWidget(left)
@@ -111,7 +138,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tree_model = QtGui.QStandardItemModel(0, 1, self.tree)
         self.tree_model.setHorizontalHeaderLabels(["Файлы"])
         self.tree.setModel(self.tree_model)
-        self.tree.setMinimumWidth(260)
+        # Минимум ниже — чтобы окно реально можно было сжимать.
+        self.tree.setMinimumWidth(140)
         l_v.addWidget(self.tree)
 
         right = QtWidgets.QWidget()
@@ -130,6 +158,7 @@ class MainWindow(QtWidgets.QMainWindow):
         font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
         font.setPointSize(10)
         self.text.setFont(font)
+        self.text.setMinimumSize(0, 0)
         r_v.addWidget(self.text, 1)
 
         bottom = QtWidgets.QHBoxLayout()
@@ -168,7 +197,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
         page_settings = QtWidgets.QWidget()
         tabs.addTab(page_settings, "Настройки")
-        s_v = QtWidgets.QFormLayout(page_settings)
+        settings_v = QtWidgets.QVBoxLayout(page_settings)
+
+        # Категории настроек (разворачиваются по клику)
+        self.settings_box = QtWidgets.QToolBox()
+        settings_v.addWidget(self.settings_box, 1)
+
+        # --- Категория: Файлы ---
+        page_files = QtWidgets.QWidget()
+        files_form = QtWidgets.QFormLayout(page_files)
         self.chk_ignore_hidden = QtWidgets.QCheckBox()
         self.chk_ignore_hidden.setChecked(self.w.cfg.ignore_hidden)
         self.chk_follow_links = QtWidgets.QCheckBox()
@@ -177,39 +214,31 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chk_dirs_first.setChecked(self.w.cfg.dirs_first_in_tree)
         self.chk_detect_encoding = QtWidgets.QCheckBox()
         self.chk_detect_encoding.setChecked(self.w.cfg.detect_encoding)
-        s_v.addRow("Игнорировать скрытые", self.chk_ignore_hidden)
-        s_v.addRow("Следовать symlinks", self.chk_follow_links)
-        s_v.addRow("Директории первыми", self.chk_dirs_first)
-        s_v.addRow("Автоопределение кодировки", self.chk_detect_encoding)
+        files_form.addRow("Игнорировать скрытые", self.chk_ignore_hidden)
+        files_form.addRow("Следовать symlinks", self.chk_follow_links)
+        files_form.addRow("Папки первыми", self.chk_dirs_first)
+        files_form.addRow("Авто-кодировка", self.chk_detect_encoding)
         self.ed_max_size = QtWidgets.QLineEdit(str(self.w.cfg.max_file_size))
         self.ed_bin_thr = QtWidgets.QLineEdit(str(self.w.cfg.binary_threshold))
         self.ed_encoding = QtWidgets.QLineEdit(self.w.cfg.encoding)
         self.combo_errors = QtWidgets.QComboBox()
         self.combo_errors.addItems(["strict", "replace", "ignore"])
         self.combo_errors.setCurrentText(self.w.cfg.errors_policy)
-        s_v.addRow("Макс. размер файла (байт, 0=без лимита)", self.ed_max_size)
-        s_v.addRow("Порог бинарности (0..1)", self.ed_bin_thr)
-        s_v.addRow("Кодировка по умолчанию", self.ed_encoding)
-        s_v.addRow("Политика ошибок", self.combo_errors)
+        files_form.addRow("Макс. размер (байт, 0=∞)", self.ed_max_size)
+        files_form.addRow("Порог бинарности (0..1)", self.ed_bin_thr)
+        files_form.addRow("Кодировка", self.ed_encoding)
+        files_form.addRow("Ошибки декодирования", self.combo_errors)
         self.txt_ignore_dirs = QtWidgets.QPlainTextEdit(", ".join(self.w.cfg.ignore_dirs))
         self.txt_ignore_files = QtWidgets.QPlainTextEdit(", ".join(self.w.cfg.ignore_files))
         self.txt_ignore_dirs.setMaximumHeight(60)
         self.txt_ignore_files.setMaximumHeight(60)
-        s_v.addRow("Исключаемые директории (через запятую)", self.txt_ignore_dirs)
-        s_v.addRow("Исключаемые файлы/паттерны (через запятую)", self.txt_ignore_files)
+        files_form.addRow("Исключаемые папки", self.txt_ignore_dirs)
+        files_form.addRow("Исключаемые файлы/паттерны", self.txt_ignore_files)
+        self.settings_box.addItem(page_files, "Файлы")
 
-        self.chk_include_collapsed = QtWidgets.QCheckBox()
-        self.chk_include_collapsed.setChecked(self.w.cfg.include_collapsed_in_dump)
-        s_v.addRow("Показывать свёрнутые в дампе", self.chk_include_collapsed)
-
-        self.theme_btn = QtWidgets.QToolButton()
-        self.theme_btn.setCheckable(True)
-        self.theme_btn.setChecked(self.w.cfg.theme == "dark")
-        self.theme_btn.setText("🌙" if self.w.cfg.theme == "dark" else "☀️")
-        self.theme_btn.setToolTip("Переключить тему")
-        self.theme_btn.clicked.connect(self.toggle_theme)
-        s_v.addRow("Тема", self.theme_btn)
-
+        # --- Категория: Diff ---
+        page_diff_settings = QtWidgets.QWidget()
+        diff_form = QtWidgets.QFormLayout(page_diff_settings)
         self.diff_group_modifier_combo = QtWidgets.QComboBox()
         modifiers = ["Ctrl", "Shift", "Alt", "Ctrl+Shift"]
         self.diff_group_modifier_combo.addItems(modifiers)
@@ -217,21 +246,36 @@ class MainWindow(QtWidgets.QMainWindow):
         if cur_modifier not in modifiers:
             cur_modifier = "Ctrl"
         self.diff_group_modifier_combo.setCurrentText(cur_modifier)
-        s_v.addRow("Модификатор для копирования группы", self.diff_group_modifier_combo)
+        diff_form.addRow("Модификатор группы", self.diff_group_modifier_combo)
 
         self.diff_flash_ms_spin = QtWidgets.QSpinBox()
         self.diff_flash_ms_spin.setRange(50, 5000)
         self.diff_flash_ms_spin.setSingleStep(50)
         flash_ms = getattr(self.w.cfg, "diff_copy_flash_duration_ms", 300)
         self.diff_flash_ms_spin.setValue(int(flash_ms))
-        s_v.addRow("Подсветка копирования (мс)", self.diff_flash_ms_spin)
+        diff_form.addRow("Подсветка копирования (мс)", self.diff_flash_ms_spin)
+        self.settings_box.addItem(page_diff_settings, "Diff")
 
+        # --- Категория: Внешний вид ---
+        page_ui = QtWidgets.QWidget()
+        ui_form = QtWidgets.QFormLayout(page_ui)
+        self.theme_btn = QtWidgets.QToolButton()
+        self.theme_btn.setCheckable(True)
+        self.theme_btn.setChecked(self.w.cfg.theme == "dark")
+        self.theme_btn.setText("🌙" if self.w.cfg.theme == "dark" else "☀️")
+        self.theme_btn.setToolTip("Переключить тему")
+        self.theme_btn.clicked.connect(self.toggle_theme)
+        ui_form.addRow("Тема", self.theme_btn)
+        self.settings_box.addItem(page_ui, "Внешний вид")
+
+        # Кнопки управления (внизу, вне категорий)
         s_btns = QtWidgets.QHBoxLayout()
         self.btn_apply = QtWidgets.QPushButton("Применить")
         self.btn_save_defaults = QtWidgets.QPushButton("Сохранить по умолчанию")
         s_btns.addWidget(self.btn_apply)
         s_btns.addWidget(self.btn_save_defaults)
-        s_v.addRow(s_btns)
+        settings_v.addLayout(s_btns)
+
 
     def _connect_signals(self) -> None:
         self.path_edit.returnPressed.connect(self._rebuild_tree)
@@ -397,12 +441,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._file_index = 0
 
         self.q = queue.Queue()
+        mode = self._current_scan_mode()
         thr = ScanThread(
             root,
             self.w,
             self.q,
             self.collapsed_dirs,
             self.excluded_files,
+            mode,
             ignore_collapsed=ignore_collapsed,
             ignore_manual_excluded=bool(ignore_collapsed),
         )
@@ -443,10 +489,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     elif fmt_raw == "json":
                         fmt = OutputFormat.JSON
 
-                    only_files = bool(self.only_files_chk.isChecked()) if self.only_files_chk is not None else False
-                    include_tree = not only_files
-                    tree = None if only_files else self._scan_tree
-                    result = ScanResult(tree=tree, files=self._scan_files)
+                    mode = self._current_scan_mode()
+                    include_tree = mode != ScanMode.ONLY_FILES
+                    tree = None if mode == ScanMode.ONLY_FILES else self._scan_tree
+                    files = [] if mode == ScanMode.ONLY_TREE else self._scan_files
+                    result = ScanResult(tree=tree, files=files)
                     rendered = ExportService.export(result=result, format=fmt, include_tree=include_tree)
                     self.text.setPlainText(rendered)
                     self.progress.setValue(self.progress.maximum())
@@ -507,7 +554,6 @@ class MainWindow(QtWidgets.QMainWindow):
             cfg.encoding = self.ed_encoding.text().strip() or "utf-8"
             cfg.errors_policy = self.combo_errors.currentText()
             cfg.output_format = self.format_combo.currentText()
-            cfg.include_collapsed_in_dump = self.chk_include_collapsed.isChecked()
 
             if self.diff_group_modifier_combo is not None:
                 modifier = self.diff_group_modifier_combo.currentText().strip()

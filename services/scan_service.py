@@ -4,7 +4,7 @@ from pathlib import Path
 
 from domain.fs.reader import read_text_streaming
 from domain.fs.walker import Walker
-from domain.models import DumpFile, ScanOptions, ScanResult
+from domain.models import DumpFile, ScanMode, ScanOptions, ScanResult
 from project_dumper.config import Config
 
 
@@ -20,11 +20,14 @@ class ScanService:
         """
         Просканировать проект и вернуть результат.
 
-        Commit 13 (по ТЗ):
-        - excluded_files: пропускаются полностью (без заголовка/без записи в результате)
-        - collapsed_dirs в обычном режиме: полностью исключаются из дерева дампа и из файлов дампа
-        - ignore_collapsed: collapsed_dirs игнорируются при построении дерева дампа и при сборе файлов дампа
-        - строка "Содержимое скрыто" полностью удаляется из pipeline
+        Актуальные правила:
+        - В дереве collapsed dirs видны, но их содержимое заменяется на "…".
+        - В дампе (файлы) элементы под collapsed dirs и вручную скрытые файлы
+          НЕ показываются по умолчанию и появляются только в режиме ignore_collapsed.
+        - Режимы:
+            * TREE_AND_FILES: дерево + файлы
+            * ONLY_FILES: только файлы (tree=None)
+            * ONLY_TREE: только дерево (files=[])
 
         Args:
             root: Корневая директория проекта.
@@ -38,30 +41,33 @@ class ScanService:
         w.cfg = cfg
         w.git.build(root)
 
-        tree = w.build_tree(root, options)
+        tree: str | None = None
+        if options.mode != ScanMode.ONLY_FILES:
+            tree = w.build_tree(root, options)
 
-        files_paths = w.iter_files(root)
         out_files: list[DumpFile] = []
 
-        collapsed_dirs = set(options.collapsed_dirs)
-        if options.ignore_collapsed:
-            collapsed_dirs = set()
+        if options.mode != ScanMode.ONLY_TREE:
+            files_paths = w.iter_files(root)
 
-        for p in files_paths:
-            # В режиме "игнорировать" показываем файлы, скрытые вручную (excluded_files)
-            if (not options.ignore_manual_excluded) and (p in options.excluded_files):
-                continue
+            collapsed_dirs = set(options.collapsed_dirs)
+            if options.ignore_collapsed:
+                collapsed_dirs = set()
 
-            hide = _is_under_any(p, collapsed_dirs)
+            for p in files_paths:
+                # В режиме "игнорировать" показываем файлы, скрытые вручную (excluded_files)
+                if (not options.ignore_manual_excluded) and (p in options.excluded_files):
+                    continue
 
-            # Commit 13: collapsed -> полный exclude, без "Содержимое скрыто"
-            if hide:
-                continue
+                # По умолчанию скрытое через collapsed не показываем в дампе (файлах)
+                hide = _is_under_any(p, collapsed_dirs)
+                if hide:
+                    continue
 
-            rel = p.relative_to(root).as_posix()
+                rel = p.relative_to(root).as_posix()
 
-            content = "".join(read_text_streaming(p, cfg))
-            out_files.append(DumpFile(path=rel, content=content, skipped_reason=None))
+                content = "".join(read_text_streaming(p, cfg))
+                out_files.append(DumpFile(path=rel, content=content, skipped_reason=None))
 
         return ScanResult(tree=tree, files=out_files)
 

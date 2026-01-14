@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from domain.models import ScanOptions
+from domain.models import ScanMode, ScanOptions
 from project_dumper.config import Config
 from services.scan_service import ScanService
 
@@ -53,7 +53,7 @@ def test_scan_service_collapsed_is_excluded(sample_project_tree: Path) -> None:
     opts = ScanOptions(collapsed_dirs={collapsed_dir})
 
     res = ScanService.scan(sample_project_tree, cfg, opts)
-    # Commit 13: collapsed -> полностью исключены
+    # В дампе файлов collapsed скрывает вложенные файлы по умолчанию
     assert not any(f.path.startswith("src/") for f in res.files)
 
 
@@ -64,5 +64,23 @@ def test_scan_service_ignore_collapsed_includes_files_back(sample_project_tree: 
     opts = ScanOptions(collapsed_dirs={collapsed_dir}, ignore_collapsed=True)
 
     res = ScanService.scan(sample_project_tree, cfg, opts)
-    # Commit 13: ignore_collapsed -> файлы возвращаются обратно
+    # ignore_collapsed -> файлы возвращаются обратно
     assert any(f.path.startswith("src/") for f in res.files)
+
+
+def test_scan_service_mode_only_files_returns_no_tree(sample_project_tree: Path) -> None:
+    cfg = Config()
+    opts = ScanOptions(mode=ScanMode.ONLY_FILES)
+
+    res = ScanService.scan(sample_project_tree, cfg, opts)
+    assert res.tree is None
+    assert len(res.files) >= 1
+
+
+def test_scan_service_mode_only_tree_returns_no_files(sample_project_tree: Path) -> None:
+    cfg = Config()
+    opts = ScanOptions(mode=ScanMode.ONLY_TREE)
+
+    res = ScanService.scan(sample_project_tree, cfg, opts)
+    assert res.tree is not None
+    assert res.files == []

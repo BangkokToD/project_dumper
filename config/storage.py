@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -40,6 +41,16 @@ def get_entry_dir() -> Path:
     Это компромисс: для dev-режима cwd обычно совпадает с корнем репозитория,
     а для упакованной версии соответствует директории исполняемого файла.
     """
+    # ВАЖНО для AppImage:
+    # sys.executable указывает на бинарь внутри смонтированного образа (/tmp/.mount_...),
+    # рядом с которым нельзя писать portable-конфиг.
+    # Реальный путь к AppImage доступен в переменной окружения APPIMAGE.
+    appimage = os.environ.get("APPIMAGE")
+    if appimage:
+        try:
+            return Path(appimage).resolve().parent
+        except Exception:
+            pass
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path.cwd().resolve()
@@ -103,7 +114,13 @@ def load(
         return _load_from_path(dec.home_path)
 
     # 3) ничего нет -> дефолт
-    return Config().normalize()
+    cfg = Config().normalize()
+    # Для сборок (AppImage light/dark) задаём дефолтную тему через env,
+    # чтобы на первом запуске (без home/portable) UI открылся в нужной теме.
+    env_theme = os.environ.get("PROJECT_DUMPER_DEFAULT_THEME", "").strip().lower()
+    if env_theme in {"light", "dark"}:
+        cfg.theme = env_theme  # type: ignore[assignment]
+    return cfg
 
 
 def save(cfg: Config, *, entry_dir: Path | None = None) -> Path:

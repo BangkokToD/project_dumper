@@ -25,12 +25,15 @@ def test_mainwindow_has_diff_tab(qapp) -> None:
     assert "Diff" in labels
 
 
-def test_overview_has_scan_buttons_and_only_files_checkbox(qapp) -> None:
+def test_overview_has_scan_buttons_and_scan_mode_radios(qapp) -> None:
     w = MainWindow()
-    # Проверяем, что появились две кнопки скана и чекбокс "только файлы"
+    # Проверяем, что появились две кнопки скана и 3 режима радиокнопок
     assert w.scan_btn_normal is not None
     assert w.scan_btn_ignore_collapsed is not None
-    assert w.only_files_chk is not None
+    assert w.mode_tree_files is not None
+    assert w.mode_only_files is not None
+    assert w.mode_only_tree is not None
+    assert w.mode_tree_files.isChecked() is True
 
 
 def test_diff_scan_and_new(qapp) -> None:

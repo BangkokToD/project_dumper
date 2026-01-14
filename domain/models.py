@@ -26,6 +26,20 @@ class OutputFormat(str, Enum):
     MD = "md"
     JSON = "json"
 
+class ScanMode(str, Enum):
+    """
+    Режим сканирования (UI).
+
+    Значения:
+        TREE_AND_FILES: Дерево + файлы (по умолчанию).
+        ONLY_FILES: Только файлы (без дерева).
+        ONLY_TREE: Только дерево (без файлов).
+    """
+
+    TREE_AND_FILES = "tree_and_files"
+    ONLY_FILES = "only_files"
+    ONLY_TREE = "only_tree"
+
 
 @dataclass(slots=True)
 class ScanOptions:
@@ -41,6 +55,7 @@ class ScanOptions:
     """
 
     output_format: OutputFormat = OutputFormat.TXT
+    mode: ScanMode = ScanMode.TREE_AND_FILES
     collapsed_dirs: set[Path] = field(default_factory=set)
     excluded_files: set[Path] = field(default_factory=set)
     ignore_collapsed: bool = False

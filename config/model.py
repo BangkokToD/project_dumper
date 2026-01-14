@@ -95,9 +95,6 @@ class Config:
     output_format: str = "txt"  # txt|md|json (пока оставляем строкой для совместимости)
     theme: Literal["light", "dark"] = "light"
 
-    # Временно: будет удалено позже по ТЗ, но на данном этапе сохраняем.
-    include_collapsed_in_dump: bool = True
-
     # Diff settings
     diff_group_modifier: str = "Ctrl"
     diff_copy_flash_duration_ms: int = 300
