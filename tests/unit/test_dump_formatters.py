@@ -70,8 +70,8 @@ def test_text_formatter_skipped_reason() -> None:
     f = TextFormatter()
     res = ScanResult(
         tree="root",
-        files=[DumpFile(path="x.py", content=None, skipped_reason="Содержимое скрыто")],
+        files=[DumpFile(path="x.py", content=None, skipped_reason="Пропущено")],
     )
     out = f.format(res, include_tree=True)
     assert "x.py" in out
-    assert "Содержимое скрыто" in out
+    assert "Пропущено" in out

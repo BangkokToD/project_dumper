@@ -428,7 +428,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(self, "Ошибка", "Путь не существует или это не директория")
             return
 
-        # Дерево слева должно быть ВСЕГДА — пересобираем его при каждом скане.
+        # Дерево слева пересобирается при каждом скане (источник collapsed/excluded).
         self._rebuild_tree()
 
         self.w.cfg.output_format = self.format_combo.currentText()

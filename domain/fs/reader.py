@@ -38,7 +38,7 @@ def read_text_streaming(p: Path, cfg: Config, chunk_size: int = 1024 * 64) -> It
 
     Args:
         p: Путь к файлу.
-        cfg: Текущий Config (временно используем напрямую).
+        cfg: Текущий Config.
         chunk_size: Размер читаемого чанка (байт).
 
     Yields:

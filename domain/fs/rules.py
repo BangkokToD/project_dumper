@@ -25,7 +25,7 @@ def is_ignored_dir(path: Path, cfg: Config, git: GitignoreCache) -> bool:
     """
     Определить, должна ли директория быть проигнорирована.
 
-    Правила (текущие, совместимые со старым Walker):
+    Правила:
     - ignore_hidden + имя начинается с '.' -> игнор;
     - имя в ignore_dirs или совпадает по fnmatch -> игнор;
     - gitignore -> игнор.
@@ -44,7 +44,7 @@ def is_ignored_file(path: Path, cfg: Config, git: GitignoreCache) -> bool:
     """
     Определить, должен ли файл быть проигнорирован.
 
-    Правила (текущие, совместимые со старым Walker):
+    Правила:
     - ignore_hidden + имя начинается с '.' -> игнор;
     - имя совпадает с ignore_files по fnmatch -> игнор;
     - gitignore -> игнор.

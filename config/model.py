@@ -23,10 +23,7 @@ class OutputFormat(str, Enum):
 @dataclass(slots=True)
 class Config:
     """
-    Модель конфигурации (Config v2).
-
-    На текущем этапе сохраняем поля, совместимые со старой конфигурацией,
-    чтобы UI и сервисы работали без функциональных изменений.
+    Модель конфигурации приложения.
     """
 
     ignore_hidden: bool = True
@@ -129,7 +126,7 @@ def to_dict(cfg: Config) -> dict[str, Any]:
 
 def apply_dict(cfg: Config, data: dict[str, Any]) -> Config:
     """
-    Применить dict к Config с сохранением обратной совместимости.
+    Применить dict к Config (с защитой от некорректных значений).
     """
     for k, v in data.items():
         if not hasattr(cfg, k):
