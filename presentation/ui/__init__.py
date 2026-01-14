@@ -7,6 +7,11 @@ from project_dumper.config import Config, load_defaults
 from presentation.ui.main_window import MainWindow
 from presentation.ui.theme import apply_dark_palette, apply_light_palette
 
+__all__ = [
+    "MainWindow",
+    "run_app",
+]
+
 
 def run_app() -> None:
     """
@@ -28,7 +33,8 @@ def run_app() -> None:
             None,
             "Импорт настроек",
             text,
-            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No,
         )
         return btn == QtWidgets.QMessageBox.StandardButton.Yes
 

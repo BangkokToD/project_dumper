@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Set
 
 from domain.fs.reader import read_text_streaming
 from domain.fs.walker import Walker
@@ -43,11 +44,15 @@ class ScanService:
         files_paths = w.iter_files(root)
         out_files: list[DumpFile] = []
 
+        collapsed_dirs: Set[Path] = set(options.collapsed_dirs)
+        if options.ignore_collapsed:
+            collapsed_dirs = set()
+
         for p in files_paths:
             if p in options.excluded_files:
                 continue
 
-            hide = _is_under_any(p, options.collapsed_dirs)
+            hide = _is_under_any(p, collapsed_dirs)
 
             if hide and not cfg.include_collapsed_in_dump:
                 continue

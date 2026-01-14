@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
+import queue
 
 from domain.fs.rules import is_ignored_dir, is_ignored_file
 from domain.models import ScanOptions
@@ -69,6 +70,11 @@ class Walker:
         options = options or ScanOptions()
         collapsed = options.collapsed_dirs
         excluded = options.excluded_files
+        # Режим "игнорировать сворачивание": collapsed не влияет ни на дерево, ни на дамп.
+        # Политику "collapsed всегда exclude" внедрим позже отдельным коммитом.
+        if options.ignore_collapsed:
+            collapsed = set()
+
 
         lines: list[str] = []
 
@@ -123,7 +129,7 @@ class ScanThread(threading.Thread):
         queue_out: "queue.Queue[tuple[str, object]]",
         collapsed_dirs: set[Path],
         excluded_files: set[Path],
-        only_tree: bool,
+        ignore_collapsed: bool,
     ):
         super().__init__(daemon=True)
         self.root = root
@@ -131,7 +137,7 @@ class ScanThread(threading.Thread):
         self.q = queue_out
         self.collapsed = collapsed_dirs
         self.excluded = excluded_files
-        self.only_tree = only_tree
+        self.ignore_collapsed = ignore_collapsed
 
     def run(self) -> None:
         try:
@@ -141,17 +147,13 @@ class ScanThread(threading.Thread):
             opts = ScanOptions(
                 collapsed_dirs=set(self.collapsed),
                 excluded_files=set(self.excluded),
-                ignore_collapsed=False,
+                ignore_collapsed=bool(self.ignore_collapsed),
             )
 
             from services.scan_service import ScanService
 
             res = ScanService.scan(self.root, self.w.cfg, opts)
             self.q.put(("tree", res.tree or ""))
-
-            if self.only_tree:
-                self.q.put(("done", None))
-                return
 
             total = len(res.files)
             self.q.put(("total", total))

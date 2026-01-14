@@ -28,6 +28,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.collapsed_dirs: set[Path] = set()
         self.excluded_files: set[Path] = set()
 
+        # UX flags
+        self.only_files_chk: QtWidgets.QCheckBox | None = None
+        self.scan_btn_normal: QtWidgets.QPushButton | None = None
+        self.scan_btn_ignore_collapsed: QtWidgets.QPushButton | None = None
+
         self.q: "queue.Queue[tuple[str, object]]" = queue.Queue()
         self._scan_tree: str | None = None
         self._scan_files: list[DumpFile] = []
@@ -70,15 +75,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.path_edit.setPlaceholderText("Абсолютный путь к проекту")
         top.addWidget(QtWidgets.QLabel("Проект:"))
         top.addWidget(self.path_edit, 1)
-        self.only_tree_chk = QtWidgets.QCheckBox("Только структура")
-        top.addWidget(self.only_tree_chk)
+        self.only_files_chk = QtWidgets.QCheckBox("Сканировать только файлы (без дерева)")
+        top.addWidget(self.only_files_chk)
         top.addWidget(QtWidgets.QLabel("Формат:"))
         self.format_combo = QtWidgets.QComboBox()
         self.format_combo.addItems(["txt", "md", "json"])
         self.format_combo.setCurrentText(self.w.cfg.output_format)
         top.addWidget(self.format_combo)
-        self.scan_btn = QtWidgets.QPushButton("Сканировать")
-        top.addWidget(self.scan_btn)
+        # Кнопки сканирования:
+        # 1) игнор collapsed — слева (короче текст, компактнее)
+        # 2) стандартный скан — справа (шире)
+        self.scan_btn_ignore_collapsed = QtWidgets.QPushButton("Игнор сворачивание")
+        self.scan_btn_normal = QtWidgets.QPushButton("Сканировать")
+        self.scan_btn_ignore_collapsed.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed
+        )
+        self.scan_btn_normal.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
+        )
+        self.scan_btn_normal.setMinimumWidth(220)
+        top.addWidget(self.scan_btn_ignore_collapsed)
+        top.addWidget(self.scan_btn_normal)
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         v.addWidget(splitter, 1)
@@ -216,7 +233,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _connect_signals(self) -> None:
         self.path_edit.returnPressed.connect(self._rebuild_tree)
-        self.scan_btn.clicked.connect(self.scan)
+        if self.scan_btn_normal is not None:
+            self.scan_btn_normal.clicked.connect(lambda: self.scan(ignore_collapsed=False))
+        if self.scan_btn_ignore_collapsed is not None:
+            self.scan_btn_ignore_collapsed.clicked.connect(lambda: self.scan(ignore_collapsed=True))
         self.find_btn.clicked.connect(self.find_next)
         self.copy_btn.clicked.connect(self.copy_all)
         self.save_btn.clicked.connect(self.save_to_file)
@@ -314,7 +334,7 @@ class MainWindow(QtWidgets.QMainWindow):
         p = Path(str(data))
         if p in self.collapsed_dirs:
             self.collapsed_dirs.discard(p)
-        self.scan()
+        self.scan(ignore_collapsed=False)
 
     def _on_tree_collapsed(self, index: QtCore.QModelIndex) -> None:
         data = self.tree_model.data(index, QtCore.Qt.ItemDataRole.UserRole)
@@ -323,7 +343,7 @@ class MainWindow(QtWidgets.QMainWindow):
         p = Path(str(data))
         if p.is_dir():
             self.collapsed_dirs.add(p)
-        self.scan()
+        self.scan(ignore_collapsed=False)
 
     def _on_tree_double_clicked(self, index: QtCore.QModelIndex) -> None:
         data = self.tree_model.data(index, QtCore.Qt.ItemDataRole.UserRole)
@@ -344,9 +364,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 f.setStrikeOut(True)
                 item.setFont(f)
                 item.setForeground(QtGui.QBrush(QtGui.QColor(160, 160, 160)))
-            self.scan()
+            self.scan(ignore_collapsed=False)
 
-    def scan(self) -> None:
+    def scan(self, *, ignore_collapsed: bool = False) -> None:
         path_str = self.path_edit.text().strip()
         if not path_str:
             QtWidgets.QMessageBox.warning(self, "Нет директории", "Сначала укажи путь к проекту")
@@ -356,6 +376,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(self, "Ошибка", "Путь не существует или это не директория")
             return
 
+        # Дерево слева должно быть ВСЕГДА — пересобираем его при каждом скане.
         self._rebuild_tree()
 
         self.w.cfg.output_format = self.format_combo.currentText()
@@ -370,7 +391,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.q = queue.Queue()
         thr = ScanThread(
-            root, self.w, self.q, self.collapsed_dirs, self.excluded_files, self.only_tree_chk.isChecked()
+            root,
+            self.w,
+            self.q,
+            self.collapsed_dirs,
+            self.excluded_files,
+            ignore_collapsed=ignore_collapsed,
         )
         thr.start()
         if not self.timer.isActive():
@@ -409,8 +435,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     elif fmt_raw == "json":
                         fmt = OutputFormat.JSON
 
-                    result = ScanResult(tree=self._scan_tree, files=self._scan_files)
-                    rendered = ExportService.export(result=result, format=fmt, include_tree=True)
+                    only_files = bool(self.only_files_chk.isChecked()) if self.only_files_chk is not None else False
+                    include_tree = not only_files
+                    tree = None if only_files else self._scan_tree
+                    result = ScanResult(tree=tree, files=self._scan_files)
+                    rendered = ExportService.export(result=result, format=fmt, include_tree=include_tree)
                     self.text.setPlainText(rendered)
                     self.progress.setValue(self.progress.maximum())
                     self.timer.stop()
