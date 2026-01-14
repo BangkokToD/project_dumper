@@ -23,7 +23,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["project_dumper*", "presentation*", "domain*", "infrastructure*", "services*", "config*"]
+include = ["project_dumper", "presentation*", "domain*", "infrastructure*", "services*", "config*"]
 
 [tool.pytest.ini_options]
 addopts = "-q -m 'not gui'"

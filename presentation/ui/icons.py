@@ -2,14 +2,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6 import QtGui, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 
+from config.storage import get_entry_dir
 
 def _icons_dir() -> Path:
     """
-    Вернуть директорию с иконками в репозитории.
+    Вернуть директорию с иконками.
+
+    ВАЖНО:
+    - В упакованных форматах (AppImage) файловая система внутри образа read-only,
+      поэтому нельзя создавать/менять файлы внутри package path.
+    - Иконки должны жить рядом с entrypoint (portable), чтобы:
+        * их можно было сгенерировать при отсутствии,
+        * их можно было использовать как источник для QIcon,
+        * не падать на read-only FS.
     """
-    return Path(__file__).resolve().parent / "resources" / "icons"
+    return get_entry_dir() / "resources" / "icons"
 
 
 def _icon_path(theme: str) -> Path:
@@ -26,10 +35,11 @@ def ensure_icons_exist() -> None:
     """
     Гарантировать наличие PNG-иконок.
 
-    Если файлов нет (например, в dev-ветке или после чистого клона),
-    создаём простые PNG автоматически. Это нужно, чтобы:
-    - ручная проверка работала всегда,
-    - UI мог переключать иконку без дополнительных шагов.
+    Если файлов нет, создаём простые PNG автоматически.
+
+    Примечание для AppImage:
+    - создаём в portable-директории рядом с entrypoint (см. _icons_dir),
+      а не внутри образа.
     """
     base = _icons_dir()
     base.mkdir(parents=True, exist_ok=True)
@@ -86,7 +96,7 @@ def _render_icon_png(path: Path, bg: QtGui.QColor, fg: QtGui.QColor) -> None:
     font.setBold(True)
     font.setPointSize(72)
     painter.setFont(font)
-    painter.drawText(img.rect(), int(QtGui.Qt.AlignmentFlag.AlignCenter), "PD")
+    painter.drawText(img.rect(), int(QtCore.Qt.AlignmentFlag.AlignCenter), "PD")
 
     painter.end()
     img.save(str(path))

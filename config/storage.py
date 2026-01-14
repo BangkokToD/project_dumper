@@ -95,11 +95,26 @@ def load(
     3) если portable отсутствует, но home есть -> опциональный импорт через callback
     4) если нет ни одного -> дефолтный Config
     """
+    # Portable-only режим (для AppImage): игнорируем HOME полностью.
+    # Это нужно, чтобы:
+    # - не подтягивать старые настройки из ~/.project_dumper.json,
+    # - дефолтная тема из PROJECT_DUMPER_DEFAULT_THEME применялась предсказуемо.
+    portable_only = os.environ.get("PROJECT_DUMPER_PORTABLE_ONLY", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
     dec = decide(entry_dir, home_dir)
 
     # 1) portable
     if dec.portable_path.exists():
         return _load_from_path(dec.portable_path)
+
+    if portable_only:
+        cfg = Config().normalize()
+        env_theme = os.environ.get("PROJECT_DUMPER_DEFAULT_THEME", "").strip().lower()
+        if env_theme in {"light", "dark"}:
+            cfg.theme = env_theme  # type: ignore[assignment]
+        return cfg
 
     # 2) home (с возможностью импорта)
     if dec.home_path.exists():

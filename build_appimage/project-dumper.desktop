@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Project Dumper
+Exec=ProjectDumper
+Icon=project-dumper
+Categories=Development;
+Terminal=false

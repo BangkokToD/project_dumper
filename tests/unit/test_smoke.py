@@ -18,9 +18,6 @@ def test_imports() -> None:
     from services import export_service  # noqa: F401
     from services import scan_service  # noqa: F401
     import project_dumper  # noqa: F401
-    from project_dumper import (  # noqa: F401
-        config,
-        formatter,
-        gui,
-        walker,
-    )
+    import presentation.ui  # noqa: F401
+    import config.storage  # noqa: F401
+    import config.model  # noqa: F401

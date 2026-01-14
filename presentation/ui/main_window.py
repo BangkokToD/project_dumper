@@ -6,8 +6,9 @@ import queue
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from project_dumper import __version__
-from project_dumper.config import load_defaults, save_defaults, Config
-from project_dumper.walker import Walker, ScanThread
+from config.model import Config
+from config import storage
+from domain.fs.walker import Walker, ScanThread
 
 from domain.diff.logic import get_group_indices, strip_for_copy, detect_diff_block_indices
 from domain.models import DumpFile, OutputFormat, ScanMode, ScanResult
@@ -26,7 +27,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setMinimumSize(520, 360)
 
         self.w = Walker()
-        self.w.cfg = cfg or load_defaults()
+        self.w.cfg = cfg or storage.load()
 
         self.root_path: Path | None = None
         self.collapsed_dirs: set[Path] = set()
@@ -701,7 +702,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def save_defaults_clicked(self) -> None:
         self.apply_settings()
         try:
-            save_defaults(self.w.cfg)
+            storage.save(self.w.cfg)
             QtWidgets.QMessageBox.information(self, "Сохранено", "Сохранено в portable-конфиг")
             app = QtWidgets.QApplication.instance()
             if app is not None:

@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+export PROJECT_DUMPER_DEFAULT_THEME="light"
+# AppImage должен быть portable-only: не читаем ~/.project_dumper.json
+export PROJECT_DUMPER_PORTABLE_ONLY="1"
+# В AppImage чаще всего стабильнее принудительно использовать XCB:
+# - убираем зависимость от wayland shell integration
+# - на Wayland работает через XWayland
+export QT_QPA_PLATFORM="xcb"
+# Qt: указываем пути плагинов явно.
+export QT_PLUGIN_PATH="$(dirname "$0")/usr/bin/_internal/PyQt6/Qt6/plugins"
+export QT_QPA_PLATFORM_PLUGIN_PATH="$(dirname "$0")/usr/bin/platforms"
+# Даем загрузчику найти доложенные .so зависимости плагинов (xcb/wayland и т.п.)
+export LD_LIBRARY_PATH="$(dirname "$0")/usr/lib:$(dirname "$0")/usr/bin/_internal:${LD_LIBRARY_PATH:-}"
+exec "$(dirname "$0")/usr/bin/ProjectDumper" "$@"

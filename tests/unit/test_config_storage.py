@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from config import storage
@@ -61,3 +62,20 @@ def test_storage_returns_defaults_when_no_configs(tmp_path: Path) -> None:
     cfg = storage.load(entry_dir=entry_dir, home_dir=home_dir)
     assert isinstance(cfg, Config)
     assert cfg.theme in ("light", "dark")
+
+
+def test_storage_portable_only_ignores_home(tmp_path: Path, monkeypatch) -> None:
+    entry_dir = tmp_path / "app"
+    entry_dir.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+
+    # есть home-конфиг, но portable отсутствует
+    (home_dir / ".project_dumper.json").write_text('{"theme":"dark"}', encoding="utf-8")
+
+    monkeypatch.setenv("PROJECT_DUMPER_PORTABLE_ONLY", "1")
+    monkeypatch.setenv("PROJECT_DUMPER_DEFAULT_THEME", "light")
+
+    cfg = storage.load(entry_dir=entry_dir, home_dir=home_dir)
+    # HOME игнорируется, берём дефолт + env theme
+    assert cfg.theme == "light"

@@ -5,7 +5,7 @@ from pathlib import Path
 from domain.fs.reader import read_text_streaming
 from domain.fs.walker import Walker
 from domain.models import DumpFile, ScanMode, ScanOptions, ScanResult
-from project_dumper.config import Config
+from config.model import Config
 
 
 class ScanService:

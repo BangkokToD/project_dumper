@@ -1,8 +1,37 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def _filter_toc_only_files(toc):
+    """
+    Отфильтровать TOC PyInstaller, оставив только записи с существующим файлом-источником.
+
+    Зачем:
+      Иногда в a.binaries/a.datas попадает директория (например, корень пакета),
+      что ломает COLLECT с ошибкой:
+        ValueError: Resource '.../project_dumper/project_dumper' is not a valid file!
+    """
+    out = []
+    for item in list(toc):
+        # TOC-элемент обычно (dest_name, src_name, typecode)
+        try:
+            src = item[1]
+        except Exception:
+            continue
+        try:
+            if src and Path(src).is_file():
+                out.append(item)
+        except Exception:
+            # на всякий случай игнорируем странные записи
+            continue
+    return out
+
 
 a = Analysis(
-    ['/home/bangkok/MoyaMasteskaya/Моя мастерская/project_dumper/project_dumper (Копия)/main.py'],
+    ['project_dumper/__main__.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -15,6 +44,10 @@ a = Analysis(
     optimize=0,
 )
 pyz = PYZ(a.pure)
+
+# Фикс: выкидываем из ресурсов любые директории/битые записи.
+a.binaries = _filter_toc_only_files(a.binaries)
+a.datas = _filter_toc_only_files(a.datas)
 
 exe = EXE(
     pyz,

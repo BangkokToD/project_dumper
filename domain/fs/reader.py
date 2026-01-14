@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
-from project_dumper.config import Config
+from config.model import Config
 
 try:
     from charset_normalizer import from_bytes

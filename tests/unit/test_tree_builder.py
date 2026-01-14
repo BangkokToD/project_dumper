@@ -4,7 +4,7 @@ from pathlib import Path
 
 from domain.fs.walker import Walker
 from domain.models import ScanOptions
-from project_dumper.config import Config
+from config.model import Config
 
 
 def test_tree_builder_empty_dir_has_ellipsis(tmp_path: Path) -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from config import storage
-from project_dumper.config import Config, load_defaults, save_defaults
+from config.model import Config
 
 
 def test_config_roundtrip(tmp_path: Path, monkeypatch) -> None:
@@ -17,7 +17,6 @@ def test_config_roundtrip(tmp_path: Path, monkeypatch) -> None:
     cfg.diff_group_modifier = "Shift"
     cfg.diff_copy_flash_duration_ms = 777
 
-    # save_defaults пишет в portable (рядом с entrypoint), поэтому подменяем entry_dir через storage.save
     storage.save(cfg, entry_dir=entry_dir)
     rc = storage.portable_path(entry_dir)
     assert rc.exists()

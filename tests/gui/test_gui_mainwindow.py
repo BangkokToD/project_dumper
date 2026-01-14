@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from PyQt6 import QtWidgets
 
-from project_dumper.gui import MainWindow
+from presentation.ui.main_window import MainWindow
 from project_dumper import __version__
 
 pytestmark = pytest.mark.gui

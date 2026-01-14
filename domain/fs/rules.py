@@ -11,7 +11,7 @@ import fnmatch
 from pathlib import Path
 
 from infrastructure.gitignore_cache import GitignoreCache
-from project_dumper.config import Config
+from config.model import Config
 
 
 def _match_any(name: str, patterns: tuple[str, ...]) -> bool:

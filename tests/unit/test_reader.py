@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from project_dumper.config import Config
+from config.model import Config
 from domain.fs.reader import is_binary_sample, read_text_streaming
 
 

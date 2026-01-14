@@ -8,7 +8,8 @@ from domain.fs.rules import is_ignored_dir, is_ignored_file
 from domain.models import ScanOptions
 from infrastructure import filesystem
 from infrastructure.gitignore_cache import GitignoreCache
-from project_dumper.config import Config, load_defaults
+from config.model import Config
+from config import storage
 
 
 class Walker:
@@ -26,7 +27,7 @@ class Walker:
         self.git = GitignoreCache()
 
     def load_cfg(self, root: Path) -> None:
-        self.cfg = load_defaults()
+        self.cfg = storage.load()
         self.git.build(root)
 
     def skip_dir(self, path: Path) -> bool:

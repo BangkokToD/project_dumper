@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from project_dumper.config import Config
+from config.model import Config
 from domain.fs.walker import Walker
 from domain.models import ScanOptions
 

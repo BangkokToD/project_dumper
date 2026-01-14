@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from domain.models import ScanMode, ScanOptions
-from project_dumper.config import Config
+from config.model import Config
 from services.scan_service import ScanService
 
 

@@ -3,7 +3,8 @@ from __future__ import annotations
 import sys
 from PyQt6 import QtWidgets
 
-from project_dumper.config import Config, load_defaults
+from config.model import Config
+from config import storage
 from presentation.ui.main_window import MainWindow
 from presentation.ui.icons import apply_app_icon, ensure_icons_exist
 from presentation.ui.theme import apply_dark_palette, apply_light_palette
@@ -43,7 +44,7 @@ def run_app() -> None:
         )
         return btn == QtWidgets.QMessageBox.StandardButton.Yes
 
-    cfg: Config = load_defaults(import_prompt=_import_prompt)
+    cfg: Config = storage.load(import_prompt=_import_prompt)
 
     if cfg.theme == "dark":
         apply_dark_palette(app)
