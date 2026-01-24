@@ -313,7 +313,7 @@ dist_appimage/
 
 ---
 
-## Обратная связь
+## Обратная связь:
 
 Автор: **Bangkok**
 GitHub: [https://github.com/BangkokToD](https://github.com/BangkokToD)
