@@ -148,7 +148,7 @@ class ScanThread(threading.Thread):
     def run(self) -> None:
         try:
             # конфиг, как и раньше, берём через load_cfg
-            self.w.load_cfg(self.root)
+            self.w.git.build(self.root)
 
             opts = ScanOptions(
                 mode=self.mode,
