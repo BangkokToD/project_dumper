@@ -1,5 +1,5 @@
 {
-  "ignore_hidden": true,
+  "ignore_hidden": false,
   "max_file_size": 524288,
   "encoding": "utf-8",
   "errors_policy": "replace",
@@ -21,7 +21,6 @@
     ".cache"
   ],
   "ignore_files": [
-    ".gitignore",
     "*.png",
     "*.jpg",
     "*.jpeg",
@@ -64,7 +63,6 @@
   "detect_encoding": true,
   "output_format": "txt",
   "theme": "dark",
-  "include_collapsed_in_dump": true,
   "diff_group_modifier": "Shift",
   "diff_copy_flash_duration_ms": 800
 }

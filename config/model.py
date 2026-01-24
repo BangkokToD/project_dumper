@@ -26,7 +26,7 @@ class Config:
     Модель конфигурации приложения.
     """
 
-    ignore_hidden: bool = True
+    ignore_hidden: bool = False
     max_file_size: int = 512 * 1024
     encoding: str = "utf-8"
     errors_policy: str = "replace"
@@ -48,7 +48,7 @@ class Config:
         ".cache",
     )
     ignore_files: tuple[str, ...] = (
-        ".gitignore",
+        # ".gitignore",
         "*.png",
         "*.jpg",
         "*.jpeg",
