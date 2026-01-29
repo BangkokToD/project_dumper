@@ -25,6 +25,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resize(1200, 720)
         # Даем возможность сжимать окно без “боли”: не ставим жёсткие минимумы на крупные зоны.
         self.setMinimumSize(520, 360)
+        self._pending_rescan: bool = False
 
         self.w = Walker()
         self.w.cfg = cfg or storage.load()
@@ -208,6 +209,8 @@ class MainWindow(QtWidgets.QMainWindow):
         page_files = QtWidgets.QWidget()
         files_form = QtWidgets.QFormLayout(page_files)
         self.chk_ignore_hidden = QtWidgets.QCheckBox()
+        self.chk_include_env = QtWidgets.QCheckBox()
+        self.chk_include_env.setChecked(getattr(self.w.cfg, "include_env", False))
         self.chk_ignore_hidden.setChecked(self.w.cfg.ignore_hidden)
         self.chk_follow_links = QtWidgets.QCheckBox()
         self.chk_follow_links.setChecked(self.w.cfg.follow_symlinks)
@@ -215,6 +218,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chk_dirs_first.setChecked(self.w.cfg.dirs_first_in_tree)
         self.chk_detect_encoding = QtWidgets.QCheckBox()
         self.chk_detect_encoding.setChecked(self.w.cfg.detect_encoding)
+        files_form.addRow("Включать .env в сканирование и дамп", self.chk_include_env)
         files_form.addRow("Игнорировать скрытые", self.chk_ignore_hidden)
         files_form.addRow("Следовать symlinks", self.chk_follow_links)
         files_form.addRow("Папки первыми", self.chk_dirs_first)
@@ -277,6 +281,25 @@ class MainWindow(QtWidgets.QMainWindow):
         s_btns.addWidget(self.btn_save_defaults)
         settings_v.addLayout(s_btns)
 
+    def _on_include_env_changed(self, _state: int) -> None:
+        """
+        include_env применяется сразу (в текущей сессии) и запускает перескан.
+        Сохранение в .project_dumper.json — только по кнопке "Сохранить по умолчанию".
+        """
+        self.w.cfg.include_env = bool(self.chk_include_env.isChecked())
+
+        # Если скан идёт — отложим перескан до "done".
+        if getattr(self, "timer", None) is not None and self.timer.isActive():
+            self._pending_rescan = True
+            return
+
+        path_str = self.path_edit.text().strip()
+        if not path_str:
+            return
+        root = Path(path_str)
+        if root.exists() and root.is_dir():
+            self.scan(ignore_collapsed=False)
+
 
     def _connect_signals(self) -> None:
         self.path_edit.returnPressed.connect(self._rebuild_tree)
@@ -304,6 +327,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tree.collapsed.connect(self._on_tree_collapsed)
         self.tree.doubleClicked.connect(self._on_tree_double_clicked)
         self.btn_apply.clicked.connect(self.apply_settings)
+        self.chk_include_env.stateChanged.connect(self._on_include_env_changed)
         self.btn_save_defaults.clicked.connect(self.save_defaults_clicked)
 
     def toggle_theme(self) -> None:
@@ -427,11 +451,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if not root.exists() or not root.is_dir():
             QtWidgets.QMessageBox.critical(self, "Ошибка", "Путь не существует или это не директория")
             return
-
+        self.w.cfg.include_env = bool(self.chk_include_env.isChecked())
         # Дерево слева пересобирается при каждом скане (источник collapsed/excluded).
         self._rebuild_tree()
 
-        self.w.cfg.output_format = self.format_combo.currentText()
+        cfg_overrides: dict[str, object] = {
+            "output_format": self.format_combo.currentText(),
+            "include_env": bool(self.chk_include_env.isChecked()),
+        }
         self._scan_tree = None
         self._scan_files = []
         self._cur_file = None
@@ -452,6 +479,7 @@ class MainWindow(QtWidgets.QMainWindow):
             mode,
             ignore_collapsed=ignore_collapsed,
             ignore_manual_excluded=bool(ignore_collapsed),
+            cfg_overrides=cfg_overrides,
         )
         thr.start()
         if not self.timer.isActive():
@@ -499,6 +527,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.text.setPlainText(rendered)
                     self.progress.setValue(self.progress.maximum())
                     self.timer.stop()
+                    if self._pending_rescan:
+                        self._pending_rescan = False
+                        QtCore.QTimer.singleShot(0, lambda: self.scan(ignore_collapsed=False))
                 elif kind == "error":
                     QtWidgets.QMessageBox.critical(self, "Ошибка", str(payload))
                     self.timer.stop()
@@ -547,6 +578,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             cfg = self.w.cfg
             cfg.ignore_hidden = self.chk_ignore_hidden.isChecked()
+            cfg.include_env = self.chk_include_env.isChecked()
             cfg.follow_symlinks = self.chk_follow_links.isChecked()
             cfg.dirs_first_in_tree = self.chk_dirs_first.isChecked()
             cfg.detect_encoding = self.chk_detect_encoding.isChecked()

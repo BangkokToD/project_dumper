@@ -49,10 +49,9 @@ class GitignoreCache:
                         continue
                     neg = s.startswith("!")
                     pat = s[1:] if neg else s
-                    if pat.startswith("/"):
-                        pat2 = pat.lstrip("/")
-                    else:
-                        pat2 = (f"{base_rel}/{pat}" if base_rel else pat)
+                    pat2 = pat.lstrip("/") if pat.startswith("/") else pat
+                    if base_rel:
+                        pat2 = f"{base_rel}/{pat2}"
                     norm = "/".join(seg for seg in pat2.split("/") if seg != ".")
                     lines.append(("!" if neg else "") + norm)
             self.root = root
