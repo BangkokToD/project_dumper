@@ -13,6 +13,11 @@ from pathlib import Path
 from infrastructure.gitignore_cache import GitignoreCache
 from config.model import Config
 
+_HIDDEN_WHITELIST_FILES: set[str] = {
+    ".gitignore",
+    ".env.example",
+}
+
 
 def _match_any(name: str, patterns: tuple[str, ...]) -> bool:
     """
@@ -50,10 +55,33 @@ def is_ignored_file(path: Path, cfg: Config, git: GitignoreCache) -> bool:
     - gitignore -> игнор.
     """
     name = path.name
-    if cfg.ignore_hidden and name.startswith("."):
+
+    # .env по умолчанию скрыт (безопасность), появляется только при include_env=true
+    if name == ".env" and not cfg.include_env:
         return True
+
+    # ignore_hidden: dotfiles скрываем, кроме whitelist и .env при include_env=true
+    if cfg.ignore_hidden and name.startswith("."):
+        if name in _HIDDEN_WHITELIST_FILES:
+            pass
+        elif name == ".env" and cfg.include_env:
+            pass
+        else:
+            return True
+
     if _match_any(name, cfg.ignore_files):
         return True
+
+    # .env при включенной галочке не должен "умирать" из-за .gitignore
+    if name == ".env" and cfg.include_env:
+        return False
+
+    # .gitignore должен быть видимым/дампиться и не ломать применение правил:
+    # не даём gitignore-движку исключить сам .gitignore.
+    if name == ".gitignore":
+        return False
+
     if git.ignored(path):
         return True
+
     return False
