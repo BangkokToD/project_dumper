@@ -281,37 +281,25 @@ class MainWindow(QtWidgets.QMainWindow):
         s_btns.addWidget(self.btn_save_defaults)
         settings_v.addLayout(s_btns)
 
-    def _on_include_env_changed(self, _state: int) -> None:
-        """
-        include_env применяется сразу (в текущей сессии) и запускает перескан.
-        Сохранение в .project_dumper.json — только по кнопке "Сохранить по умолчанию".
-        """
-        self.w.cfg.include_env = bool(self.chk_include_env.isChecked())
+def _on_include_env_changed(self, _state: int) -> None:
+    """
+    include_env применяется сразу (в текущей сессии) и запускает перескан.
+    Сохранение в .project_dumper.json — только по кнопке "Сохранить по умолчанию".
+    """
+    self.w.cfg.include_env = bool(self.chk_include_env.isChecked())
 
-        # Если скан идёт — отложим перескан до "done".
-        if getattr(self, "timer", None) is not None and self.timer.isActive():
-            self._pending_rescan = True
-            return
+    # Если скан идёт — отложим перескан до "done".
+    if getattr(self, "timer", None) is not None and self.timer.isActive():
+        self._pending_rescan = True
+        return
 
-        path_str = self.path_edit.text().strip()
-        if not path_str:
-            return
-        root = Path(path_str)
-        if root.exists() and root.is_dir():
-            self.scan(ignore_collapsed=False)
+    path_str = self.path_edit.text().strip()
+    if not path_str:
+        return
+    root = Path(path_str)
+    if root.exists() and root.is_dir():
+        self.scan(ignore_collapsed=False)
 
-        # Если у вас есть признак "скан идёт" — используем его.
-        # В моём варианте: активный таймер прогресса.
-        if getattr(self, "timer", None) is not None and self.timer.isActive():
-            self._pending_rescan = True
-            return
-
-        path_str = self.path_edit.text().strip()
-        if not path_str:
-            return
-        root = Path(path_str)
-        if root.exists() and root.is_dir():
-            self.scan(ignore_collapsed=False)
 
     def _connect_signals(self) -> None:
         self.path_edit.returnPressed.connect(self._rebuild_tree)
