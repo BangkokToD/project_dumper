@@ -27,6 +27,7 @@ class Config:
     """
 
     ignore_hidden: bool = True
+    include_env: bool = False
     max_file_size: int = 512 * 1024
     encoding: str = "utf-8"
     errors_policy: str = "replace"
@@ -99,6 +100,15 @@ class Config:
         """
         Нормализовать конфиг (включая старые значения).
         """
+        if not isinstance(self.include_env, bool):
+            if isinstance(self.include_env, str):
+                s = self.include_env.strip().lower()
+                if s in {"1", "true", "yes", "on"}:
+                    self.include_env = True  # type: ignore[assignment]
+                else:
+                    self.include_env = False  # type: ignore[assignment]
+            else:
+                self.include_env = bool(self.include_env)  # type: ignore[assignment]
         if self.max_file_size < 0:
             self.max_file_size = 0
         if not (0.0 <= float(self.binary_threshold) <= 1.0):
