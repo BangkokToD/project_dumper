@@ -48,7 +48,6 @@ class Config:
         ".cache",
     )
     ignore_files: tuple[str, ...] = (
-        ".gitignore",
         "*.png",
         "*.jpg",
         "*.jpeg",
