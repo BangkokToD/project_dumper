@@ -8,7 +8,7 @@ from domain.fs.rules import is_ignored_dir, is_ignored_file
 from domain.models import ScanOptions
 from infrastructure import filesystem
 from infrastructure.gitignore_cache import GitignoreCache
-from config.model import Config
+from config.model import Config, apply_dict
 from config import storage
 
 
@@ -25,8 +25,11 @@ class Walker:
         self.cfg = Config()
         self.git = GitignoreCache()
 
-    def load_cfg(self, root: Path) -> None:
-        self.cfg = storage.load()
+    def load_cfg(self, root: Path, overrides: dict[str, object] | None = None) -> None:
+        cfg = storage.load()
+        if overrides:
+            cfg = apply_dict(cfg, overrides)
+        self.cfg = cfg
         self.git.build(root)
 
     def skip_dir(self, path: Path) -> bool:
@@ -134,8 +137,10 @@ class ScanThread(threading.Thread):
         mode,
         ignore_collapsed: bool,
         ignore_manual_excluded: bool,
+        cfg_overrides: dict[str, object] | None = None,
     ):
         super().__init__(daemon=True)
+        self.cfg_overrides = cfg_overrides
         self.root = root
         self.w = walker
         self.q = queue_out
@@ -148,7 +153,7 @@ class ScanThread(threading.Thread):
     def run(self) -> None:
         try:
             # конфиг, как и раньше, берём через load_cfg
-            self.w.load_cfg(self.root)
+            self.w.load_cfg(self.root, overrides=self.cfg_overrides)
 
             opts = ScanOptions(
                 mode=self.mode,

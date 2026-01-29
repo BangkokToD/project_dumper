@@ -462,7 +462,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Дерево слева пересобирается при каждом скане (источник collapsed/excluded).
         self._rebuild_tree()
 
-        self.w.cfg.output_format = self.format_combo.currentText()
+        cfg_overrides: dict[str, object] = {"output_format": self.format_combo.currentText()}
         self._scan_tree = None
         self._scan_files = []
         self._cur_file = None
@@ -483,6 +483,7 @@ class MainWindow(QtWidgets.QMainWindow):
             mode,
             ignore_collapsed=ignore_collapsed,
             ignore_manual_excluded=bool(ignore_collapsed),
+            cfg_overrides=cfg_overrides,
         )
         thr.start()
         if not self.timer.isActive():
