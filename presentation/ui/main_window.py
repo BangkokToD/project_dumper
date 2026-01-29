@@ -283,17 +283,22 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_include_env_changed(self, _state: int) -> None:
         """
-        include_env должен:
-        - сохраняться сразу в .project_dumper.json,
-        - инициировать перескан (или откладываться до окончания текущего скана).
+        include_env применяется сразу (в текущей сессии) и запускает перескан.
+        Сохранение в .project_dumper.json — только по кнопке "Сохранить по умолчанию".
         """
-        try:
-            self.w.cfg.include_env = bool(self.chk_include_env.isChecked())
-            # используй тот же способ сохранения, что уже применяется для .project_dumper.json
-            storage.save(self.w.cfg)
-        except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "Ошибка", str(e))
+        self.w.cfg.include_env = bool(self.chk_include_env.isChecked())
+
+        # Если скан идёт — отложим перескан до "done".
+        if getattr(self, "timer", None) is not None and self.timer.isActive():
+            self._pending_rescan = True
             return
+
+        path_str = self.path_edit.text().strip()
+        if not path_str:
+            return
+        root = Path(path_str)
+        if root.exists() and root.is_dir():
+            self.scan(ignore_collapsed=False)
 
         # Если у вас есть признак "скан идёт" — используем его.
         # В моём варианте: активный таймер прогресса.
