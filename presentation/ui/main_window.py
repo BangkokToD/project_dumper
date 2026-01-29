@@ -25,6 +25,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resize(1200, 720)
         # Даем возможность сжимать окно без “боли”: не ставим жёсткие минимумы на крупные зоны.
         self.setMinimumSize(520, 360)
+        self._pending_rescan: bool = False
 
         self.w = Walker()
         self.w.cfg = cfg or storage.load()
@@ -208,6 +209,8 @@ class MainWindow(QtWidgets.QMainWindow):
         page_files = QtWidgets.QWidget()
         files_form = QtWidgets.QFormLayout(page_files)
         self.chk_ignore_hidden = QtWidgets.QCheckBox()
+        self.chk_include_env = QtWidgets.QCheckBox()
+        self.chk_include_env.setChecked(getattr(self.w.cfg, "include_env", False))
         self.chk_ignore_hidden.setChecked(self.w.cfg.ignore_hidden)
         self.chk_follow_links = QtWidgets.QCheckBox()
         self.chk_follow_links.setChecked(self.w.cfg.follow_symlinks)
@@ -215,6 +218,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chk_dirs_first.setChecked(self.w.cfg.dirs_first_in_tree)
         self.chk_detect_encoding = QtWidgets.QCheckBox()
         self.chk_detect_encoding.setChecked(self.w.cfg.detect_encoding)
+        files_form.addRow("Включать .env в сканирование и дамп", self.chk_include_env)
         files_form.addRow("Игнорировать скрытые", self.chk_ignore_hidden)
         files_form.addRow("Следовать symlinks", self.chk_follow_links)
         files_form.addRow("Папки первыми", self.chk_dirs_first)
@@ -277,6 +281,32 @@ class MainWindow(QtWidgets.QMainWindow):
         s_btns.addWidget(self.btn_save_defaults)
         settings_v.addLayout(s_btns)
 
+    def _on_include_env_changed(self, _state: int) -> None:
+        """
+        include_env должен:
+        - сохраняться сразу в .project_dumper.json,
+        - инициировать перескан (или откладываться до окончания текущего скана).
+        """
+        try:
+            self.w.cfg.include_env = bool(self.chk_include_env.isChecked())
+            # используй тот же способ сохранения, что уже применяется для .project_dumper.json
+            storage.save(self.w.cfg)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Ошибка", str(e))
+            return
+
+        # Если у вас есть признак "скан идёт" — используем его.
+        # В моём варианте: активный таймер прогресса.
+        if getattr(self, "timer", None) is not None and self.timer.isActive():
+            self._pending_rescan = True
+            return
+
+        path_str = self.path_edit.text().strip()
+        if not path_str:
+            return
+        root = Path(path_str)
+        if root.exists() and root.is_dir():
+            self.scan(ignore_collapsed=False)
 
     def _connect_signals(self) -> None:
         self.path_edit.returnPressed.connect(self._rebuild_tree)
@@ -304,6 +334,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tree.collapsed.connect(self._on_tree_collapsed)
         self.tree.doubleClicked.connect(self._on_tree_double_clicked)
         self.btn_apply.clicked.connect(self.apply_settings)
+        self.chk_include_env.stateChanged.connect(self._on_include_env_changed)
         self.btn_save_defaults.clicked.connect(self.save_defaults_clicked)
 
     def toggle_theme(self) -> None:
@@ -499,6 +530,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.text.setPlainText(rendered)
                     self.progress.setValue(self.progress.maximum())
                     self.timer.stop()
+                    if self._pending_rescan:
+                        self._pending_rescan = False
+                        QtCore.QTimer.singleShot(0, lambda: self.scan(ignore_collapsed=False))
                 elif kind == "error":
                     QtWidgets.QMessageBox.critical(self, "Ошибка", str(payload))
                     self.timer.stop()
@@ -547,6 +581,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             cfg = self.w.cfg
             cfg.ignore_hidden = self.chk_ignore_hidden.isChecked()
+            cfg.include_env = self.chk_include_env.isChecked()
             cfg.follow_symlinks = self.chk_follow_links.isChecked()
             cfg.dirs_first_in_tree = self.chk_dirs_first.isChecked()
             cfg.detect_encoding = self.chk_detect_encoding.isChecked()
