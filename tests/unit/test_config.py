@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from config import storage
-from config.model import Config
+from config.model import Config, apply_dict
+
 
 
 def test_config_roundtrip(tmp_path: Path, monkeypatch) -> None:
@@ -17,6 +18,10 @@ def test_config_roundtrip(tmp_path: Path, monkeypatch) -> None:
     cfg.diff_group_modifier = "Shift"
     cfg.diff_copy_flash_duration_ms = 777
 
+    cfg.list_scan.star_is_recursive = True
+    cfg.list_scan.ignore_filters = True
+    cfg.list_scan.expand_dir_match = True
+
     storage.save(cfg, entry_dir=entry_dir)
     rc = storage.portable_path(entry_dir)
     assert rc.exists()
@@ -27,6 +32,9 @@ def test_config_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.theme == "dark"
     assert loaded.diff_group_modifier == "Shift"
     assert loaded.diff_copy_flash_duration_ms == 777
+    assert loaded.list_scan.star_is_recursive is True
+    assert loaded.list_scan.ignore_filters is True
+    assert loaded.list_scan.expand_dir_match is True
 
 
 def test_load_defaults_on_broken_file(tmp_path: Path, monkeypatch) -> None:
@@ -52,3 +60,39 @@ def test_storage_paths_are_paths(tmp_path: Path) -> None:
     assert isinstance(p2, Path)
     assert p1.name == ".project_dumper.json"
     assert p2.name == ".project_dumper.json"
+
+
+def test_list_scan_defaults_and_normalization() -> None:
+    # дефолты, если ключей нет
+    cfg = apply_dict(Config(), {})
+    assert cfg.list_scan.star_is_recursive is False
+    assert cfg.list_scan.ignore_filters is False
+    assert cfg.list_scan.expand_dir_match is False
+
+    # поломанные типы должны нормализоваться
+    cfg2 = apply_dict(
+        Config(),
+        {
+            "list_scan": {
+                "star_is_recursive": "true",
+                "ignore_filters": "no",
+                "expand_dir_match": 1,
+            }
+        },
+    )
+    assert cfg2.list_scan.star_is_recursive is True
+    assert cfg2.list_scan.ignore_filters is False
+    assert cfg2.list_scan.expand_dir_match is True
+
+    # dotted-keys тоже допускаем
+    cfg3 = apply_dict(
+        Config(),
+        {
+            "list_scan.star_is_recursive": "1",
+            "list_scan.ignore_filters": "0",
+            "list_scan.expand_dir_match": True,
+        },
+    )
+    assert cfg3.list_scan.star_is_recursive is True
+    assert cfg3.list_scan.ignore_filters is False
+    assert cfg3.list_scan.expand_dir_match is True
