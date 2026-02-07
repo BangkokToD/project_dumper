@@ -76,6 +76,8 @@ class SelectedPath:
     resolved: Path
     kind: SelectedPathKind
     bad_pattern_syntax: bool = False
+    missing_reason: str | None = None
+
 
 
 def _kind_for_path(p: Path, *, follow_symlinks: bool) -> SelectedPathKind:

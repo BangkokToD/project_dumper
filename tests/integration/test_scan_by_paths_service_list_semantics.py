@@ -11,6 +11,8 @@ from services.scan_by_paths_service import ScanByPathsService
 class LS:
     star_is_recursive: bool
     expand_dir_match: bool
+    ignore_filters: bool = False
+
 
 
 def _mk_proj(tmp_path: Path) -> Path:

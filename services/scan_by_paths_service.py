@@ -1,17 +1,21 @@
 from __future__ import annotations
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
 from pathlib import Path
 from typing import Iterable, Protocol
 
 
 from config.model import Config
 from domain.fs.reader import read_text_streaming
+from domain.fs import rules
+from infrastructure.gitignore_cache import GitignoreCache
 from domain.list_scan.models import SelectedPath, resolve_selected_paths
 from domain.models import DumpFile, ScanResult
 
 class _ListScanSettingsLike(Protocol):
     star_is_recursive: bool
+    ignore_filters: bool
     expand_dir_match: bool
 
 
@@ -45,7 +49,13 @@ class ScanByPathsService:
     - star_is_recursive: считать '*' рекурсивной (как '**/*'), не ломая уже существующие '**'
     - dir-токены: файлы первого уровня; если файлов нет — рекурсивно (правило 7.3.1-аналог)
     - expand_dir_match: если паттерн матчится в директорию — добавить файлы (1-й уровень или рекурсивно по правилам)
+
+    Commit 8 (фильтры list_scan):
+    - применение domain.fs.rules + GitignoreCache (если ignore_filters=false)
+    - ignore_filters=true отключает ignore_hidden/ignore_dirs/ignore_files/.gitignore
+    - security-policy: include_env=false всегда скрывает .env (даже при ignore_filters=true)
     """
+
     @staticmethod
     def scan(
         root: Path,
@@ -54,6 +64,12 @@ class ScanByPathsService:
         list_scan_settings: _ListScanSettingsLike,
     ) -> ScanResult:
         selected = resolve_selected_paths(root, tokens, follow_symlinks=cfg.follow_symlinks)
+        selected = ScanByPathsService._apply_env_security(selected, cfg)
+
+        git = GitignoreCache()
+        if not list_scan_settings.ignore_filters:
+            git.build(root)
+
 
         # Минимальный fail-fast (только bad pattern syntax из Commit 5).
         bad = [s.raw for s in selected if s.kind == "pattern" and s.bad_pattern_syntax]
@@ -61,7 +77,12 @@ class ScanByPathsService:
             raise ValueError("Bad pattern syntax: " + ", ".join(bad))
 
         candidates = ScanByPathsService._collect_candidates(
-            root, selected, list_scan_settings=list_scan_settings, follow_symlinks=cfg.follow_symlinks
+            root,
+            selected,
+            cfg=cfg,
+            git=git,
+            list_scan_settings=list_scan_settings,
+            follow_symlinks=cfg.follow_symlinks,
         )
 
         ordered = ScanByPathsService._dedup_and_sort(candidates)
@@ -74,10 +95,64 @@ class ScanByPathsService:
         return ScanResult(tree=None, files=out_files)
 
     @staticmethod
+    def _apply_env_security(selected: list[SelectedPath], cfg: Config) -> list[SelectedPath]:
+        # include_env=false: явный запрос .env трактуем как missing (скрыт настройками).
+        if cfg.include_env:
+            return selected
+        out: list[SelectedPath] = []
+        for s in selected:
+            if s.kind == "file" and s.resolved.name == ".env":
+                out.append(replace(s, kind="missing", missing_reason="скрыт настройками"))
+            else:
+                out.append(s)
+        return out
+
+    @staticmethod
+    def _should_enter_dir(path: Path, *, cfg: Config, git: GitignoreCache, ignore_filters: bool) -> bool:
+        if ignore_filters:
+            return True
+        return not rules.is_ignored_dir(path, cfg, git)
+
+    @staticmethod
+    def _should_include_file(
+        root: Path,
+        path: Path,
+        *,
+        cfg: Config,
+        git: GitignoreCache,
+        ignore_filters: bool,
+    ) -> bool:
+        # security-policy: .env не показываем никогда, если include_env=false
+        if path.name == ".env" and not cfg.include_env:
+            return False
+
+        if ignore_filters:
+            return True
+
+        if ScanByPathsService._is_under_ignored_dir(root, path, cfg=cfg, git=git):
+            return False
+        return not rules.is_ignored_file(path, cfg, git)
+
+    @staticmethod
+    def _is_under_ignored_dir(root: Path, p: Path, *, cfg: Config, git: GitignoreCache) -> bool:
+        cur = p.parent
+        while True:
+            if cur == root:
+                return False
+            if rules.is_ignored_dir(cur, cfg, git):
+                return True
+            nxt = cur.parent
+            if nxt == cur:
+                return False
+            cur = nxt
+
+    @staticmethod
     def _collect_candidates(
         root: Path,
         selected: Iterable[SelectedPath],
         *,
+        cfg: Config,
+        git: GitignoreCache,
         list_scan_settings: _ListScanSettingsLike,
         follow_symlinks: bool,
     ) -> list[_Candidate]:
@@ -86,6 +161,16 @@ class ScanByPathsService:
 
         for s in selected:
             if s.kind == "file":
+                if not ScanByPathsService._is_allowed_path(root, s.resolved, follow_symlinks=follow_symlinks):
+                    continue
+                if not ScanByPathsService._should_include_file(
+                    root,
+                    s.resolved,
+                    cfg=cfg,
+                    git=git,
+                    ignore_filters=list_scan_settings.ignore_filters,
+                ):
+                    continue
                 rel = ScanByPathsService._to_rel_posix(root, s.resolved)
                 if rel is not None:
                     out.append(_Candidate(abs_path=s.resolved, rel_posix=rel))
@@ -95,14 +180,41 @@ class ScanByPathsService:
                 # Явная директория без wildcard:
                 # - включаем файлы первого уровня;
                 # - если файлов первого уровня нет -> рекурсивно (7.3.1-аналог: иначе "дампить нечего").
-                first = list(ScanByPathsService._iter_dir_files_first_level(s.resolved, follow_symlinks=follow_symlinks))
+                if not ScanByPathsService._is_allowed_path(root, s.resolved, follow_symlinks=follow_symlinks):
+                    continue
+                if not ScanByPathsService._should_enter_dir(
+                    s.resolved,
+                    cfg=cfg,
+                    git=git,
+                    ignore_filters=list_scan_settings.ignore_filters,
+                ):
+                    continue
+                first = list(
+                    ScanByPathsService._iter_dir_files_first_level(
+                        root,
+                        s.resolved,
+                        cfg=cfg,
+                        git=git,
+                        ignore_filters=list_scan_settings.ignore_filters,
+                        follow_symlinks=follow_symlinks,
+                    )
+                )
+
                 if first:
                     for ch in first:
                         rel = ScanByPathsService._to_rel_posix(root, ch)
                         if rel is not None:
                             out.append(_Candidate(abs_path=ch, rel_posix=rel))
                 else:
-                    for ch in ScanByPathsService._iter_dir_files_recursive(s.resolved, follow_symlinks=follow_symlinks):
+                    for ch in ScanByPathsService._iter_dir_files_recursive(
+                        root,
+                        s.resolved,
+                        cfg=cfg,
+                        git=git,
+                        ignore_filters=list_scan_settings.ignore_filters,
+                        follow_symlinks=follow_symlinks,
+                    ):
+
                         rel = ScanByPathsService._to_rel_posix(root, ch)
                         if rel is not None:
                             out.append(_Candidate(abs_path=ch, rel_posix=rel))
@@ -120,6 +232,15 @@ class ScanByPathsService:
                             continue
 
                         if m.is_file():
+                            if not ScanByPathsService._should_include_file(
+                                root,
+                                m,
+                                cfg=cfg,
+                                git=git,
+                                ignore_filters=list_scan_settings.ignore_filters,
+                            ):
+                                continue
+
                             rel = ScanByPathsService._to_rel_posix(root, m)
                             if rel is not None:
                                 out.append(_Candidate(abs_path=m, rel_posix=rel))
@@ -127,6 +248,14 @@ class ScanByPathsService:
 
                         # директории сами по себе не элементы результата
                         if not m.is_dir():
+                            continue
+
+                        if not ScanByPathsService._should_enter_dir(
+                            m,
+                            cfg=cfg,
+                            git=git,
+                            ignore_filters=list_scan_settings.ignore_filters,
+                        ):
                             continue
 
                         # если паттерн уже рекурсивный (**), файлы и так будут матчиться напрямую;
@@ -141,19 +270,45 @@ class ScanByPathsService:
                         # - если star_is_recursive включён -> рекурсивно
                         # - иначе -> файлы первого уровня; если их нет -> рекурсивно (7.3.1)
                         if list_scan_settings.star_is_recursive:
-                            for ch in ScanByPathsService._iter_dir_files_recursive(m, follow_symlinks=follow_symlinks):
+                            for ch in ScanByPathsService._iter_dir_files_recursive(
+                                root,
+                                m,
+                                cfg=cfg,
+                                git=git,
+                                ignore_filters=list_scan_settings.ignore_filters,
+                                follow_symlinks=follow_symlinks,
+                            ):
+
                                 rel = ScanByPathsService._to_rel_posix(root, ch)
                                 if rel is not None:
                                     out.append(_Candidate(abs_path=ch, rel_posix=rel))
                         else:
-                            first = list(ScanByPathsService._iter_dir_files_first_level(m, follow_symlinks=follow_symlinks))
+                            first = list(
+                                ScanByPathsService._iter_dir_files_first_level(
+                                    root,
+                                    m,
+                                    cfg=cfg,
+                                    git=git,
+                                    ignore_filters=list_scan_settings.ignore_filters,
+                                    follow_symlinks=follow_symlinks,
+                                )
+                            )
+
                             if first:
                                 for ch in first:
                                     rel = ScanByPathsService._to_rel_posix(root, ch)
                                     if rel is not None:
                                         out.append(_Candidate(abs_path=ch, rel_posix=rel))
                             else:
-                                for ch in ScanByPathsService._iter_dir_files_recursive(m, follow_symlinks=follow_symlinks):
+                                for ch in ScanByPathsService._iter_dir_files_recursive(
+                                    root,
+                                    m,
+                                    cfg=cfg,
+                                    git=git,
+                                    ignore_filters=list_scan_settings.ignore_filters,
+                                    follow_symlinks=follow_symlinks,
+                                ):
+
                                     rel = ScanByPathsService._to_rel_posix(root, ch)
                                     if rel is not None:
                                         out.append(_Candidate(abs_path=ch, rel_posix=rel))
@@ -219,19 +374,51 @@ class ScanByPathsService:
 
 
     @staticmethod
-    def _iter_dir_files_first_level(dir_path: Path, *, follow_symlinks: bool) -> Iterable[Path]:
+    def _iter_dir_files_first_level(
+        root: Path,
+        dir_path: Path,
+        *,
+        cfg: Config,
+        git: GitignoreCache,
+        ignore_filters: bool,
+        follow_symlinks: bool,
+    ) -> Iterable[Path]:
+
         try:
             for ch in dir_path.iterdir():
                 if not ch.is_file():
                     continue
-                if (not follow_symlinks) and ch.is_symlink():
+                if not ScanByPathsService._is_allowed_path(root, ch, follow_symlinks=follow_symlinks):
+                    continue
+                if not ScanByPathsService._should_include_file(
+                    root,
+                    ch,
+                    cfg=cfg,
+                    git=git,
+                    ignore_filters=ignore_filters,
+                ):
+
                     continue
                 yield ch
         except Exception:
             return
 
     @staticmethod
-    def _iter_dir_files_recursive(dir_path: Path, *, follow_symlinks: bool) -> Iterable[Path]:
+    def _iter_dir_files_recursive(
+        root: Path,
+        dir_path: Path,
+        *,
+        cfg: Config,
+        git: GitignoreCache,
+        ignore_filters: bool,
+        follow_symlinks: bool,
+    ) -> Iterable[Path]:
+        """
+        Рекурсивный сбор файлов без добавления директорий как элементов результата.
+        Используем os.walk, чтобы уважать follow_symlinks (followlinks).
+        При ignore_filters=False также не заходим в игнорируемые директории (как Walker).
+        """
+
         """
         Рекурсивный сбор файлов без добавления директорий как элементов результата.
         Используем os.walk, чтобы уважать follow_symlinks (followlinks).
@@ -239,9 +426,31 @@ class ScanByPathsService:
         try:
             for base, dirs, files in os.walk(dir_path, followlinks=follow_symlinks):
                 base_p = Path(base)
+
+                if not ignore_filters:
+                    kept: list[str] = []
+                    for d in list(dirs):
+                        dp = base_p / d
+                        if not ScanByPathsService._is_allowed_path(root, dp, follow_symlinks=follow_symlinks):
+                            continue
+                        if rules.is_ignored_dir(dp, cfg, git):
+                            continue
+                        kept.append(d)
+                    dirs[:] = kept
+
+
                 for name in files:
                     p = base_p / name
-                    if (not follow_symlinks) and p.is_symlink():
+                    if not ScanByPathsService._is_allowed_path(root, p, follow_symlinks=follow_symlinks):
+                        continue
+                    if not ScanByPathsService._should_include_file(
+                        root,
+                        p,
+                        cfg=cfg,
+                        git=git,
+                        ignore_filters=ignore_filters,
+                    ):
+
                         continue
                     yield p
         except Exception:
