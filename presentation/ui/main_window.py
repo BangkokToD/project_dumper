@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import queue
+from typing import cast
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
@@ -72,6 +73,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.diff_group_modifier_combo: QtWidgets.QComboBox | None = None
         self.diff_flash_ms_spin: QtWidgets.QSpinBox | None = None
+
+        # Settings → Список (list_scan.*)
+        self.chk_list_star_recursive: QtWidgets.QCheckBox | None = None
+        self.chk_list_ignore_filters: QtWidgets.QCheckBox | None = None
+        self.chk_list_expand_dir_match: QtWidgets.QCheckBox | None = None
+
+
 
         self.diff_text: QtWidgets.QPlainTextEdit | None = None
         self.diff_scan_btn: QtWidgets.QPushButton | None = None
@@ -327,6 +335,37 @@ class MainWindow(QtWidgets.QMainWindow):
         files_form.addRow("Исключаемые папки", self.txt_ignore_dirs)
         files_form.addRow("Исключаемые файлы/паттерны", self.txt_ignore_files)
         self.settings_box.addItem(page_files, "Файлы")
+
+        # --- Категория: Список ---
+        # ТЗ 3.1: list_scan.star_is_recursive / ignore_filters / expand_dir_match【turn12file5†ТЗ v0.3.0.md†L61-L78】
+        page_list_settings = QtWidgets.QWidget()
+        list_form = QtWidgets.QFormLayout(page_list_settings)
+
+        # защитно: cfg.list_scan гарантирован normalize(), но оставим fallback
+        ls = getattr(self.w.cfg, "list_scan", None)
+        if ls is None:
+            # если вдруг очень старый cfg, чтобы UI не падал
+            class _Tmp:
+                star_is_recursive = False
+                ignore_filters = False
+                expand_dir_match = False
+            ls = _Tmp()
+
+        self.chk_list_star_recursive = QtWidgets.QCheckBox()
+        self.chk_list_star_recursive.setChecked(bool(getattr(ls, "star_is_recursive", False)))
+        list_form.addRow("Считать * рекурсивной (как **/*)", self.chk_list_star_recursive)
+
+        self.chk_list_ignore_filters = QtWidgets.QCheckBox()
+        self.chk_list_ignore_filters.setChecked(bool(getattr(ls, "ignore_filters", False)))
+        list_form.addRow("Игнорировать фильтры", self.chk_list_ignore_filters)
+
+        self.chk_list_expand_dir_match = QtWidgets.QCheckBox()
+        self.chk_list_expand_dir_match.setChecked(bool(getattr(ls, "expand_dir_match", False)))
+        list_form.addRow("Если паттерн совпал с директорией — включать файлы из неё", self.chk_list_expand_dir_match)
+
+        self.settings_box.addItem(page_list_settings, "Список")
+
+
 
         # --- Категория: Diff ---
         page_diff_settings = QtWidgets.QWidget()
@@ -937,6 +976,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
             cfg.ignore_dirs = _split_csv(self.txt_ignore_dirs.toPlainText())
             cfg.ignore_files = _split_csv(self.txt_ignore_files.toPlainText())
+
+            # list_scan.* (Настройки → Список)
+            # Важно: эти значения должны попасть в cfg, чтобы перед list-scan их можно было сохранить на диск
+            # (требование 3.2/9.3)【turn11file10†ТЗ v0.3.0.md†L1-L7】【turn11file14†ТЗ v0.3.0.md†L5-L11】
+            if getattr(cfg, "list_scan", None) is not None:
+                if self.chk_list_star_recursive is not None:
+                    cfg.list_scan.star_is_recursive = bool(self.chk_list_star_recursive.isChecked())
+                if self.chk_list_ignore_filters is not None:
+                    cfg.list_scan.ignore_filters = bool(self.chk_list_ignore_filters.isChecked())
+                if self.chk_list_expand_dir_match is not None:
+                    cfg.list_scan.expand_dir_match = bool(self.chk_list_expand_dir_match.isChecked())
+
+
             QtWidgets.QMessageBox.information(self, "Ок", "Настройки применены. Пересканируй проект.")
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Ошибка", str(e))
