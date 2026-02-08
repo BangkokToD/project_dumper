@@ -1,9 +1,10 @@
 from __future__ import annotations
 import os
+from collections import Counter
 from dataclasses import dataclass, replace
 
 from pathlib import Path
-from typing import Iterable, Protocol
+from typing import Iterable, Protocol, Any
 
 
 from config.model import Config
@@ -11,12 +12,28 @@ from domain.fs.reader import read_text_streaming
 from domain.fs import rules
 from infrastructure.gitignore_cache import GitignoreCache
 from domain.list_scan.models import SelectedPath, resolve_selected_paths
+from domain.list_scan.diagnostics import (
+    ListScanDiagnostics,
+    ListScanIssueGroup,
+    ListScanIssueItem,
+    ListScanValidationError,
+    ZeroMatchesReason,
+)
+
 from domain.models import DumpFile, ScanResult
 
 class _ListScanSettingsLike(Protocol):
     star_is_recursive: bool
     ignore_filters: bool
     expand_dir_match: bool
+
+
+@dataclass(slots=True)
+class _ListScanSettingsOverride:
+    star_is_recursive: bool
+    ignore_filters: bool
+    expand_dir_match: bool
+
 
 
 
@@ -71,10 +88,17 @@ class ScanByPathsService:
             git.build(root)
 
 
-        # Минимальный fail-fast (только bad pattern syntax из Commit 5).
-        bad = [s.raw for s in selected if s.kind == "pattern" and s.bad_pattern_syntax]
-        if bad:
-            raise ValueError("Bad pattern syntax: " + ", ".join(bad))
+        diagnostics = ScanByPathsService._build_fail_fast_diagnostics(
+            root,
+            selected,
+            cfg=cfg,
+            git=git,
+            list_scan_settings=list_scan_settings,
+            follow_symlinks=cfg.follow_symlinks,
+        )
+        if diagnostics.groups:
+            raise ListScanValidationError(diagnostics)
+
 
         candidates = ScanByPathsService._collect_candidates(
             root,
@@ -93,6 +117,153 @@ class ScanByPathsService:
             out_files.append(DumpFile(path=c.rel_posix, content=content, skipped_reason=None))
 
         return ScanResult(tree=None, files=out_files)
+    @staticmethod
+    def _build_fail_fast_diagnostics(
+        root: Path,
+        selected: list[SelectedPath],
+        *,
+        cfg: Config,
+        git: GitignoreCache,
+        list_scan_settings: _ListScanSettingsLike,
+        follow_symlinks: bool,
+    ) -> ListScanDiagnostics:
+        """
+        Fail-fast валидация "до чтения файлов":
+        - missing (включая .env policy)
+        - bad pattern syntax
+        - pattern 0 matches (no_matches vs filtered_out)
+
+        Возвращает диагностику для UI (модалка).
+        """
+
+        # ключ: (value, detail, reason)
+        missing_keys: list[tuple[str, str | None, ZeroMatchesReason | None]] = []
+        bad_pattern_keys: list[tuple[str, str | None, ZeroMatchesReason | None]] = []
+        zero_matches_keys: list[tuple[str, str | None, ZeroMatchesReason | None]] = []
+
+        # cache по raw, чтобы не дергать glob по нескольку раз на одинаковых токенах
+        glob_error_cache: dict[str, str | None] = {}
+
+        for s in selected:
+            if s.kind == "missing":
+                missing_keys.append((s.raw, s.missing_reason, None))
+                continue
+
+            if s.kind != "pattern":
+                continue
+
+            # 7.4: bad syntax не смешиваем с 0 matches
+            if s.bad_pattern_syntax:
+                bad_pattern_keys.append((s.raw, None, None))
+                continue
+
+            # дополнительная защита: если glob падает — считаем это bad pattern syntax
+            if s.raw not in glob_error_cache:
+                pat = ScanByPathsService._apply_star_is_recursive(
+                    s.raw, enabled=list_scan_settings.star_is_recursive
+                )
+                glob_error_cache[s.raw] = ScanByPathsService._try_glob_error(root, pat)
+
+            err = glob_error_cache[s.raw]
+            if err is not None:
+                bad_pattern_keys.append((s.raw, err, None))
+                continue
+
+            # ok-pattern -> проверяем 0 matches (с учетом expand_dir_match + фильтров)
+            filtered_cnt = len(
+                ScanByPathsService._collect_candidates(
+                    root,
+                    [s],
+                    cfg=cfg,
+                    git=git,
+                    list_scan_settings=list_scan_settings,
+                    follow_symlinks=follow_symlinks,
+                )
+            )
+            if filtered_cnt != 0:
+                continue
+
+            reason: ZeroMatchesReason = "no_matches"
+            if not list_scan_settings.ignore_filters:
+                pre_settings = _ListScanSettingsOverride(
+                    star_is_recursive=list_scan_settings.star_is_recursive,
+                    ignore_filters=True,
+                    expand_dir_match=list_scan_settings.expand_dir_match,
+                )
+                pre_cnt = len(
+                    ScanByPathsService._collect_candidates(
+                        root,
+                        [s],
+                        cfg=cfg,
+                        git=git,
+                        list_scan_settings=pre_settings,
+                        follow_symlinks=follow_symlinks,
+                    )
+                )
+                if pre_cnt > 0:
+                    reason = "filtered_out"
+
+            zero_matches_keys.append((s.raw, None, reason))
+
+        groups: list[ListScanIssueGroup] = []
+        # порядок групп для модалки (как в ТЗ): missing -> 0 matches -> bad syntax
+        if missing_keys:
+            groups.append(
+                ListScanIssueGroup(
+                    kind="missing",
+                    items=ScanByPathsService._mk_issue_items(missing_keys),
+                )
+            )
+        if zero_matches_keys:
+            groups.append(
+                ListScanIssueGroup(
+                    kind="zero_matches",
+                    items=ScanByPathsService._mk_issue_items(zero_matches_keys),
+                )
+            )
+        if bad_pattern_keys:
+            groups.append(
+                ListScanIssueGroup(
+                    kind="bad_pattern_syntax",
+                    items=ScanByPathsService._mk_issue_items(bad_pattern_keys),
+                )
+            )
+
+        return ListScanDiagnostics(groups=groups)
+
+    @staticmethod
+    def _try_glob_error(root: Path, pattern: str) -> str | None:
+        """Вернуть текст ошибки glob, если он падает на этом паттерне."""
+        try:
+            it = root.glob(pattern)
+            next(it, None)
+            return None
+        except Exception as e:
+            return str(e) or repr(e)
+
+    @staticmethod
+    def _mk_issue_items(
+        keys: list[tuple[str, str | None, ZeroMatchesReason | None]],
+    ) -> list[ListScanIssueItem]:
+        """Dedup + multiplier ×N (count)."""
+        counts: Counter[Any] = Counter(keys)
+        seen: set[Any] = set()
+        items: list[ListScanIssueItem] = []
+        for key in keys:
+            if key in seen:
+                continue
+            seen.add(key)
+            value, detail, reason = key
+            items.append(
+                ListScanIssueItem(
+                    value=value,
+                    count=counts[key],
+                    reason=reason,
+                    detail=detail,
+                )
+            )
+        return items
+
 
     @staticmethod
     def _apply_env_security(selected: list[SelectedPath], cfg: Config) -> list[SelectedPath]:

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import pytest
 
 from config.model import Config
 from services.scan_by_paths_service import ScanByPathsService
+from domain.list_scan.diagnostics import ListScanValidationError
 
 
 @dataclass(slots=True)
@@ -67,8 +69,13 @@ def test_env_security_rule_applies_even_when_ignore_filters_true(tmp_path: Path)
     root = _mk_proj(tmp_path)
     cfg = Config()  # include_env=False
 
-    r = ScanByPathsService.scan(root, [".env", ".env.example"], cfg, LS(ignore_filters=True))
-    assert [f.path for f in r.files] == [".env.example"]
+    with pytest.raises(ListScanValidationError) as e:
+        ScanByPathsService.scan(root, [".env", ".env.example"], cfg, LS(ignore_filters=True))
+
+    diag = e.value.diagnostics
+    assert [g.kind for g in diag.groups] == ["missing"]
+    assert [(it.value, it.count, it.detail) for it in diag.groups[0].items] == [(".env", 1, "скрыт настройками")]
+
 
 
 def test_env_allowed_when_include_env_true_even_if_gitignore_mentions_env(tmp_path: Path) -> None:
