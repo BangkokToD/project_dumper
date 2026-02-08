@@ -184,3 +184,63 @@ class ScanThread(threading.Thread):
 
         except Exception as e:
             self.q.put(("error", str(e)))
+
+class ListScanThread(threading.Thread):
+    """
+    Отдельный поток для вкладки "Список".
+    Независим от ScanThread (Обзор), использует свой queue pump в UI.
+    """
+
+    def __init__(
+        self,
+        root: Path,
+        walker: Walker,
+        queue_out: "queue.Queue[tuple[str, object]]",
+        tokens: list[str],
+        cfg_overrides: dict[str, object] | None = None,
+    ):
+        super().__init__(daemon=True)
+        self.cfg_overrides = cfg_overrides
+        self.root = root
+        self.w = walker
+        self.q = queue_out
+        self.tokens = list(tokens)
+
+    def run(self) -> None:
+        try:
+            # ВАЖНО: грузим cfg внутри потока (storage.load внутри load_cfg)
+            self.w.load_cfg(self.root, overrides=self.cfg_overrides)
+
+            # match+dedup+filters (busy в UI)
+            self.q.put(("busy", None))
+
+            from services.scan_by_paths_service import ScanByPathsService
+            from domain.list_scan import ListScanValidationError
+
+            try:
+                res = ScanByPathsService.scan(
+                    self.root,
+                    self.tokens,
+                    self.w.cfg,
+                    self.w.cfg.list_scan,
+                )
+            except ListScanValidationError as e:
+                self.q.put(("failfast", e.diagnostics))
+                return
+
+            total = len(res.files)
+            self.q.put(("total", total))
+
+            for i, f in enumerate(res.files, 1):
+                self.q.put(("file_header", f.path))
+                if f.content is None:
+                    self.q.put(("file_skipped", f.skipped_reason or ""))
+                else:
+                    self.q.put(("file_chunk", f.content))
+                self.q.put(("file_sep", None))
+                self.q.put(("progress", i))
+
+            self.q.put(("done", None))
+
+        except Exception as e:
+            self.q.put(("error", str(e)))

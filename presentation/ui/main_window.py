@@ -8,7 +8,9 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from project_dumper import __version__
 from config.model import Config
 from config import storage
-from domain.fs.walker import Walker, ScanThread
+from domain.fs.walker import ListScanThread, ScanThread, Walker
+from domain.list_scan import ListScanDiagnostics, ListScanIssueKind, ZeroMatchesReason, parse_list_tokens
+
 
 from domain.diff.logic import get_group_indices, strip_for_copy, detect_diff_block_indices
 from domain.models import DumpFile, OutputFormat, ScanMode, ScanResult
@@ -41,7 +43,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mode_only_files: QtWidgets.QRadioButton | None = None
         self.mode_only_tree: QtWidgets.QRadioButton | None = None
 
-        # "Список" tab widgets
+        # --- вкладка "Список" (layout добавлен в commit 11) ---
         self.list_path_edit: QtWidgets.QLineEdit | None = None
         self.list_format_combo: QtWidgets.QComboBox | None = None
         self.list_scan_btn: QtWidgets.QPushButton | None = None
@@ -51,6 +53,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.list_copy_btn: QtWidgets.QPushButton | None = None
         self.list_save_btn: QtWidgets.QPushButton | None = None
         self.list_clear_btn: QtWidgets.QPushButton | None = None
+
+        # state для "Список" (отдельно от Обзора)
+        self.list_q: "queue.Queue[tuple[str, object]]" = queue.Queue()
+        self._list_scan_files: list[DumpFile] = []
+        self._list_cur_file: DumpFile | None = None
+        self._list_total_files: int = 0
+        self._list_run_format: str = "txt"
 
 
 
@@ -81,6 +90,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.timer = QtCore.QTimer(self)
         self.timer.setInterval(50)
         self.timer.timeout.connect(self._pump_queue)
+
+
+        self.list_timer = QtCore.QTimer(self)
+        self.list_timer.setInterval(50)
+        self.list_timer.timeout.connect(self._pump_list_queue)
+
 
     def _current_scan_mode(self) -> ScanMode:
         """
@@ -190,29 +205,27 @@ class MainWindow(QtWidgets.QMainWindow):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 3)
 
-        # --- Tab: Список ---
+        # ---------------------------
+        # Вкладка "Список" (между Обзор и Diff)
+        # ---------------------------
         page_list = QtWidgets.QWidget()
         tabs.addTab(page_list, "Список")
         l_v = QtWidgets.QVBoxLayout(page_list)
 
         l_top = QtWidgets.QHBoxLayout()
         l_v.addLayout(l_top)
+        l_top.addWidget(QtWidgets.QLabel("Проект:"))
         self.list_path_edit = QtWidgets.QLineEdit()
         self.list_path_edit.setPlaceholderText("Абсолютный путь к проекту")
-        l_top.addWidget(QtWidgets.QLabel("Проект:"))
         l_top.addWidget(self.list_path_edit, 1)
 
         l_top.addWidget(QtWidgets.QLabel("Формат:"))
         self.list_format_combo = QtWidgets.QComboBox()
         self.list_format_combo.addItems(["txt", "md", "json"])
-        # По умолчанию — тот же формат, что и в “Обзор”, но это независимый выбор.
         self.list_format_combo.setCurrentText(self.w.cfg.output_format)
         l_top.addWidget(self.list_format_combo)
 
         self.list_scan_btn = QtWidgets.QPushButton("Сканировать")
-        self.list_scan_btn.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
-        )
         l_top.addWidget(self.list_scan_btn)
 
         l_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
@@ -220,25 +233,19 @@ class MainWindow(QtWidgets.QMainWindow):
         l_splitter.setChildrenCollapsible(True)
         l_splitter.setHandleWidth(6)
 
-        l_in_wrap = QtWidgets.QWidget()
-        l_splitter.addWidget(l_in_wrap)
-        l_in_layout = QtWidgets.QVBoxLayout(l_in_wrap)
+        l_left = QtWidgets.QWidget()
+        l_splitter.addWidget(l_left)
+        l_left_v = QtWidgets.QVBoxLayout(l_left)
         self.list_input = QtWidgets.QPlainTextEdit()
         self.list_input.setPlaceholderText("Вставьте текст со списком путей и паттернов")
-        list_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
-        list_font.setPointSize(10)
-        self.list_input.setFont(list_font)
-        self.list_input.setMinimumSize(0, 0)
-        l_in_layout.addWidget(self.list_input, 1)
+        l_left_v.addWidget(self.list_input, 1)
 
-        l_out_wrap = QtWidgets.QWidget()
-        l_splitter.addWidget(l_out_wrap)
-        l_out_layout = QtWidgets.QVBoxLayout(l_out_wrap)
+        l_right = QtWidgets.QWidget()
+        l_splitter.addWidget(l_right)
+        l_right_v = QtWidgets.QVBoxLayout(l_right)
         self.list_output = QtWidgets.QPlainTextEdit()
         self.list_output.setReadOnly(True)
-        self.list_output.setFont(list_font)
-        self.list_output.setMinimumSize(0, 0)
-        l_out_layout.addWidget(self.list_output, 1)
+        l_right_v.addWidget(self.list_output, 1)
 
         l_bottom = QtWidgets.QHBoxLayout()
         l_v.addLayout(l_bottom)
@@ -251,8 +258,9 @@ class MainWindow(QtWidgets.QMainWindow):
         l_bottom.addWidget(self.list_copy_btn)
         l_bottom.addWidget(self.list_save_btn)
         l_bottom.addWidget(self.list_clear_btn)
+
         l_splitter.setStretchFactor(0, 1)
-        l_splitter.setStretchFactor(1, 1)
+        l_splitter.setStretchFactor(1, 3)
 
 
 
@@ -391,12 +399,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.save_btn.clicked.connect(self.save_to_file)
         self.clear_btn.clicked.connect(lambda: self.text.setPlainText(""))
 
+        # --- вкладка "Список" ---
+        if self.list_scan_btn is not None:
+            self.list_scan_btn.clicked.connect(self.scan_list)
         if self.list_copy_btn is not None:
-            self.list_copy_btn.clicked.connect(self.list_copy_all)
+            self.list_copy_btn.clicked.connect(self.copy_list_output)
         if self.list_save_btn is not None:
-            self.list_save_btn.clicked.connect(self.list_save_to_file)
-        if self.list_clear_btn is not None and self.list_output is not None:
-            self.list_clear_btn.clicked.connect(lambda: self.list_output.setPlainText(""))
+            self.list_save_btn.clicked.connect(self.save_list_output)
+        if self.list_clear_btn is not None:
+            self.list_clear_btn.clicked.connect(self.clear_list_output)
 
 
 
@@ -624,6 +635,235 @@ class MainWindow(QtWidgets.QMainWindow):
         except queue.Empty:
             pass
 
+
+    # -----------------------------
+    # "Список" (list scan)
+    # -----------------------------
+    def clear_list_output(self) -> None:
+        if self.list_output is not None:
+            self.list_output.setPlainText("")
+
+    def copy_list_output(self) -> None:
+        if self.list_output is None:
+            return
+        data = self.list_output.toPlainText()
+        if not data.strip():
+            QtWidgets.QMessageBox.information(self, "Пусто", "Нечего копировать")
+            return
+        QtWidgets.QApplication.clipboard().setText(data)
+
+    def save_list_output(self) -> None:
+        if self.list_output is None:
+            return
+        data = self.list_output.toPlainText()
+        if not data.strip():
+            QtWidgets.QMessageBox.information(self, "Пусто", "Нечего сохранять")
+            return
+
+        ext = "txt"
+        if self.list_format_combo is not None:
+            ext = (self.list_format_combo.currentText() or "txt").strip().lower()
+
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Сохранить дамп (Список)",
+            f"list_dump.{ext}",
+            "Текст (*.txt);;Markdown (*.md);;JSON (*.json);;Все файлы (*.*)",
+        )
+        if not path:
+            return
+        Path(path).write_text(data, encoding="utf-8")
+
+    def scan_list(self) -> None:
+        """
+        Запуск фонового скана по токенам из вкладки "Список".
+        Требование commit 12: перед стартом сохранить cfg на диск (storage.save),
+        затем поток грузит cfg через walker.load_cfg внутри потока. 【turn7file2†...†L7-L28】
+        """
+        if self.list_timer.isActive():
+            # уже сканируем
+            return
+
+        # 1) root
+        path_str = ""
+        if self.list_path_edit is not None:
+            path_str = self.list_path_edit.text().strip()
+        if not path_str and getattr(self, "path_edit", None) is not None:
+            # удобный fallback: если в "Список" пусто, берём из "Обзор"
+            path_str = self.path_edit.text().strip()
+            if self.list_path_edit is not None and path_str:
+                self.list_path_edit.setText(path_str)
+
+        if not path_str:
+            QtWidgets.QMessageBox.warning(self, "Нет директории", "Сначала укажи путь к проекту")
+            return
+        root = Path(path_str)
+        if not root.exists() or not root.is_dir():
+            QtWidgets.QMessageBox.critical(self, "Ошибка", "Путь не существует или это не директория")
+            return
+
+        # 2) parse tokens + normalize input area
+        raw = self.list_input.toPlainText() if self.list_input is not None else ""
+        tokens = parse_list_tokens(raw)
+        if not tokens:
+            # по ТЗ: если после парсера пусто — считаем ошибкой ввода
+            self.clear_list_output()
+            QtWidgets.QMessageBox.warning(self, "Пустой список", "Не найдено ни одного пути/паттерна")
+            return
+        if self.list_input is not None:
+            self.list_input.setPlainText("\n".join(tokens))
+
+        # 3) commit 12 requirement: сохранить cfg до старта (поток будет load_cfg внутри себя)
+        try:
+            storage.save(self.w.cfg)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить конфиг перед сканом: {e}")
+            return
+
+        # разовый формат (не обязаны писать в cfg)
+        fmt = "txt"
+        if self.list_format_combo is not None:
+            fmt = (self.list_format_combo.currentText() or "txt").strip().lower()
+        self._list_run_format = fmt
+
+        cfg_overrides: dict[str, object] = {
+            "output_format": fmt,
+            "include_env": bool(self.chk_include_env.isChecked()),
+        }
+
+        # reset UI/state
+        self._list_scan_files = []
+        self._list_cur_file = None
+        self._list_total_files = 0
+        self.list_q = queue.Queue()
+        if self.list_output is not None:
+            self.list_output.setPlainText("")
+        if self.list_scan_btn is not None:
+            self.list_scan_btn.setEnabled(False)
+
+        # отдельный Walker, чтобы не трогать self.w.cfg "Обзора" overrides-ами
+        w = Walker()
+        thr = ListScanThread(
+            root,
+            w,
+            self.list_q,
+            tokens=tokens,
+            cfg_overrides=cfg_overrides,
+        )
+        thr.start()
+        self.list_timer.start()
+
+    def _finish_list_scan(self) -> None:
+        if self.list_timer.isActive():
+            self.list_timer.stop()
+        if self.list_scan_btn is not None:
+            self.list_scan_btn.setEnabled(True)
+
+    def _format_list_failfast(self, diagnostics: ListScanDiagnostics) -> str:
+        kind_title: dict[ListScanIssueKind, str] = {
+            "missing": "Missing",
+            "zero_matches": "0 matches",
+            "bad_pattern_syntax": "Bad pattern syntax",
+        }
+
+        def fmt_mult(n: int) -> str:
+            return f" ×{n}" if n and n > 1 else ""
+
+        def fmt_reason(r: ZeroMatchesReason | None) -> str:
+            if r == "filtered_out":
+                return " (совпадения есть, но все отфильтрованы)"
+            if r == "no_matches":
+                return " (совпадений нет)"
+            return ""
+
+        lines: list[str] = []
+        for g in diagnostics.groups:
+            title = kind_title.get(g.kind, str(g.kind))
+            lines.append(f"{title}:")
+            for it in g.items:
+                extra = ""
+                if g.kind == "zero_matches":
+                    extra += fmt_reason(it.reason)
+                if it.detail:
+                    extra += f" — {it.detail}"
+                lines.append(f"  • {it.value}{fmt_mult(int(it.count))}{extra}")
+            lines.append("")  # пустая строка между группами
+        return "\n".join(lines).strip()
+
+    def _pump_list_queue(self) -> None:
+        # Читаем все события пачкой, чтобы при fail-fast:
+        # - очистить output
+        # - прогресс не трогать (игнорируем busy/total и т.п.) 【turn7file2†...†L19-L24】
+        events: list[tuple[str, object]] = []
+        try:
+            while True:
+                events.append(self.list_q.get_nowait())
+        except queue.Empty:
+            pass
+        if not events:
+            return
+
+        # fail-fast / error имеют приоритет
+        for kind, payload in events:
+            if kind == "failfast":
+                self.clear_list_output()
+                msg = self._format_list_failfast(payload) if isinstance(payload, ListScanDiagnostics) else str(payload)
+                QtWidgets.QMessageBox.warning(self, "Ошибки в списке", msg)
+                self._finish_list_scan()
+                return
+            if kind == "error":
+                QtWidgets.QMessageBox.critical(self, "Ошибка", str(payload))
+                self._finish_list_scan()
+                return
+
+        # обычный поток событий
+        for kind, payload in events:
+            if kind == "busy":
+                if self.list_progress is not None:
+                    self.list_progress.setRange(0, 0)
+            elif kind == "total":
+                self._list_total_files = int(payload)
+                if self.list_progress is not None:
+                    self.list_progress.setRange(0, self._list_total_files if self._list_total_files > 0 else 1)
+            elif kind == "file_header":
+                self._list_cur_file = DumpFile(path=str(payload), content="", skipped_reason=None)
+            elif kind == "file_chunk":
+                if self._list_cur_file is not None:
+                    self._list_cur_file.content = (self._list_cur_file.content or "") + str(payload)
+            elif kind == "file_skipped":
+                if self._list_cur_file is not None:
+                    self._list_cur_file.content = None
+                    self._list_cur_file.skipped_reason = str(payload)
+            elif kind == "file_sep":
+                if self._list_cur_file is not None:
+                    self._list_scan_files.append(self._list_cur_file)
+                    self._list_cur_file = None
+            elif kind == "progress":
+                if self.list_progress is not None:
+                    self.list_progress.setValue(int(payload))
+            elif kind == "done":
+                # safety: если последний файл не зафлашен
+                if self._list_cur_file is not None:
+                    self._list_scan_files.append(self._list_cur_file)
+                    self._list_cur_file = None
+
+                fmt_raw = (self._list_run_format or "txt").strip().lower()
+                fmt = OutputFormat.TXT
+                if fmt_raw == "md":
+                    fmt = OutputFormat.MD
+                elif fmt_raw == "json":
+                    fmt = OutputFormat.JSON
+
+                result = ScanResult(tree=None, files=self._list_scan_files)
+                rendered = ExportService.export(result=result, format=fmt, include_tree=False)
+                if self.list_output is not None:
+                    self.list_output.setPlainText(rendered)
+                if self.list_progress is not None:
+                    self.list_progress.setValue(self.list_progress.maximum())
+                self._finish_list_scan()
+                return
+
+
     def find_next(self) -> None:
         q = self.search_edit.text()
         if not q:
@@ -661,35 +901,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if not path:
             return
         Path(path).write_text(data, encoding="utf-8")
-
-    def list_copy_all(self) -> None:
-        if self.list_output is None:
-            return
-        data = self.list_output.toPlainText()
-        if not data.strip():
-            QtWidgets.QMessageBox.information(self, "Пусто", "Нечего копировать")
-            return
-        QtWidgets.QApplication.clipboard().setText(data)
-
-    def list_save_to_file(self) -> None:
-        if self.list_output is None or self.list_format_combo is None:
-            return
-        data = self.list_output.toPlainText()
-        if not data.strip():
-            QtWidgets.QMessageBox.information(self, "Пусто", "Нечего сохранять")
-            return
-        ext = (self.list_format_combo.currentText() or "txt").strip().lower() or "txt"
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self,
-            "Сохранить дамп",
-            f"project_dump.{ext}",
-            "Текст (*.txt);;Markdown (*.md);;JSON (*.json);;Все файлы (*.*)",
-        )
-        if not path:
-            return
-        Path(path).write_text(data, encoding="utf-8")
-
-
 
     def apply_settings(self) -> None:
         try:

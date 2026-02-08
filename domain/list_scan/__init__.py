@@ -14,6 +14,15 @@ from .models import (
     resolve_selected_path,
     resolve_selected_paths,
 )
+from .diagnostics import (
+    ListScanDiagnostics,
+    ListScanIssueGroup,
+    ListScanIssueItem,
+    ListScanIssueKind,
+    ListScanValidationError,
+    ZeroMatchesReason,
+)
+
 from .parser import TOKEN_CHARS, parse_list_tokens
 __all__ = [
     "TOKEN_CHARS",
@@ -24,4 +33,11 @@ __all__ = [
     "has_bad_bracket_syntax",
     "resolve_selected_path",
     "resolve_selected_paths",
+    "ListScanDiagnostics",
+    "ListScanIssueGroup",
+    "ListScanIssueItem",
+    "ListScanIssueKind",
+    "ListScanValidationError",
+    "ZeroMatchesReason",
+
 ]
