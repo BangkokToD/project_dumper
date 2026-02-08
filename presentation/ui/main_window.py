@@ -41,6 +41,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mode_only_files: QtWidgets.QRadioButton | None = None
         self.mode_only_tree: QtWidgets.QRadioButton | None = None
 
+        # "Список" tab widgets
+        self.list_path_edit: QtWidgets.QLineEdit | None = None
+        self.list_format_combo: QtWidgets.QComboBox | None = None
+        self.list_scan_btn: QtWidgets.QPushButton | None = None
+        self.list_input: QtWidgets.QPlainTextEdit | None = None
+        self.list_output: QtWidgets.QPlainTextEdit | None = None
+        self.list_progress: QtWidgets.QProgressBar | None = None
+        self.list_copy_btn: QtWidgets.QPushButton | None = None
+        self.list_save_btn: QtWidgets.QPushButton | None = None
+        self.list_clear_btn: QtWidgets.QPushButton | None = None
+
+
+
         self.q: "queue.Queue[tuple[str, object]]" = queue.Queue()
         self._scan_tree: str | None = None
         self._scan_files: list[DumpFile] = []
@@ -177,6 +190,72 @@ class MainWindow(QtWidgets.QMainWindow):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 3)
 
+        # --- Tab: Список ---
+        page_list = QtWidgets.QWidget()
+        tabs.addTab(page_list, "Список")
+        l_v = QtWidgets.QVBoxLayout(page_list)
+
+        l_top = QtWidgets.QHBoxLayout()
+        l_v.addLayout(l_top)
+        self.list_path_edit = QtWidgets.QLineEdit()
+        self.list_path_edit.setPlaceholderText("Абсолютный путь к проекту")
+        l_top.addWidget(QtWidgets.QLabel("Проект:"))
+        l_top.addWidget(self.list_path_edit, 1)
+
+        l_top.addWidget(QtWidgets.QLabel("Формат:"))
+        self.list_format_combo = QtWidgets.QComboBox()
+        self.list_format_combo.addItems(["txt", "md", "json"])
+        # По умолчанию — тот же формат, что и в “Обзор”, но это независимый выбор.
+        self.list_format_combo.setCurrentText(self.w.cfg.output_format)
+        l_top.addWidget(self.list_format_combo)
+
+        self.list_scan_btn = QtWidgets.QPushButton("Сканировать")
+        self.list_scan_btn.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
+        )
+        l_top.addWidget(self.list_scan_btn)
+
+        l_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        l_v.addWidget(l_splitter, 1)
+        l_splitter.setChildrenCollapsible(True)
+        l_splitter.setHandleWidth(6)
+
+        l_in_wrap = QtWidgets.QWidget()
+        l_splitter.addWidget(l_in_wrap)
+        l_in_layout = QtWidgets.QVBoxLayout(l_in_wrap)
+        self.list_input = QtWidgets.QPlainTextEdit()
+        self.list_input.setPlaceholderText("Вставьте текст со списком путей и паттернов")
+        list_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
+        list_font.setPointSize(10)
+        self.list_input.setFont(list_font)
+        self.list_input.setMinimumSize(0, 0)
+        l_in_layout.addWidget(self.list_input, 1)
+
+        l_out_wrap = QtWidgets.QWidget()
+        l_splitter.addWidget(l_out_wrap)
+        l_out_layout = QtWidgets.QVBoxLayout(l_out_wrap)
+        self.list_output = QtWidgets.QPlainTextEdit()
+        self.list_output.setReadOnly(True)
+        self.list_output.setFont(list_font)
+        self.list_output.setMinimumSize(0, 0)
+        l_out_layout.addWidget(self.list_output, 1)
+
+        l_bottom = QtWidgets.QHBoxLayout()
+        l_v.addLayout(l_bottom)
+        self.list_progress = QtWidgets.QProgressBar()
+        self.list_progress.setRange(0, 100)
+        l_bottom.addWidget(self.list_progress, 1)
+        self.list_copy_btn = QtWidgets.QPushButton("Скопировать всё")
+        self.list_save_btn = QtWidgets.QPushButton("Сохранить…")
+        self.list_clear_btn = QtWidgets.QPushButton("Очистить")
+        l_bottom.addWidget(self.list_copy_btn)
+        l_bottom.addWidget(self.list_save_btn)
+        l_bottom.addWidget(self.list_clear_btn)
+        l_splitter.setStretchFactor(0, 1)
+        l_splitter.setStretchFactor(1, 1)
+
+
+
         page_diff = QtWidgets.QWidget()
         tabs.addTab(page_diff, "Diff")
         d_v = QtWidgets.QVBoxLayout(page_diff)
@@ -311,6 +390,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.copy_btn.clicked.connect(self.copy_all)
         self.save_btn.clicked.connect(self.save_to_file)
         self.clear_btn.clicked.connect(lambda: self.text.setPlainText(""))
+
+        if self.list_copy_btn is not None:
+            self.list_copy_btn.clicked.connect(self.list_copy_all)
+        if self.list_save_btn is not None:
+            self.list_save_btn.clicked.connect(self.list_save_to_file)
+        if self.list_clear_btn is not None and self.list_output is not None:
+            self.list_clear_btn.clicked.connect(lambda: self.list_output.setPlainText(""))
+
+
 
         if self.diff_text is not None:
             self.diff_text.viewport().installEventFilter(self)
@@ -573,6 +661,35 @@ class MainWindow(QtWidgets.QMainWindow):
         if not path:
             return
         Path(path).write_text(data, encoding="utf-8")
+
+    def list_copy_all(self) -> None:
+        if self.list_output is None:
+            return
+        data = self.list_output.toPlainText()
+        if not data.strip():
+            QtWidgets.QMessageBox.information(self, "Пусто", "Нечего копировать")
+            return
+        QtWidgets.QApplication.clipboard().setText(data)
+
+    def list_save_to_file(self) -> None:
+        if self.list_output is None or self.list_format_combo is None:
+            return
+        data = self.list_output.toPlainText()
+        if not data.strip():
+            QtWidgets.QMessageBox.information(self, "Пусто", "Нечего сохранять")
+            return
+        ext = (self.list_format_combo.currentText() or "txt").strip().lower() or "txt"
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Сохранить дамп",
+            f"project_dump.{ext}",
+            "Текст (*.txt);;Markdown (*.md);;JSON (*.json);;Все файлы (*.*)",
+        )
+        if not path:
+            return
+        Path(path).write_text(data, encoding="utf-8")
+
+
 
     def apply_settings(self) -> None:
         try:
