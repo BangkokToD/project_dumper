@@ -162,6 +162,7 @@ class ScanByPathsService:
                 pat = ScanByPathsService._apply_star_is_recursive(
                     s.raw, enabled=list_scan_settings.star_is_recursive
                 )
+                pat = ScanByPathsService._normalize_trailing_double_star(pat)
                 glob_error_cache[s.raw] = ScanByPathsService._try_glob_error(root, pat)
 
             err = glob_error_cache[s.raw]
@@ -235,6 +236,7 @@ class ScanByPathsService:
     def _try_glob_error(root: Path, pattern: str) -> str | None:
         """Вернуть текст ошибки glob, если он падает на этом паттерне."""
         try:
+            pattern = ScanByPathsService._normalize_trailing_double_star(pattern)
             it = root.glob(pattern)
             next(it, None)
             return None
@@ -394,8 +396,12 @@ class ScanByPathsService:
 
             if s.kind == "pattern":
                 # Path.glob для паттернов относительно root.
-                pattern = ScanByPathsService._apply_star_is_recursive(s.raw, enabled=list_scan_settings.star_is_recursive)
+                pattern = ScanByPathsService._apply_star_is_recursive(
+                    s.raw, enabled=list_scan_settings.star_is_recursive
+                )
+                pattern = ScanByPathsService._normalize_trailing_double_star(pattern)
                 is_recursive_pattern = ("**" in pattern)
+
 
                 try:
                     for m in root.glob(pattern):
@@ -542,6 +548,23 @@ class ScanByPathsService:
 
         return "/".join(out_parts)
 
+
+    @staticmethod
+    def _normalize_trailing_double_star(pattern: str) -> str:
+        """
+        pathlib.Path.glob("**") и "dir/**" на практике матчят в основном директории (и "."),
+        а не файлы. Для семантики вкладки "Список" считаем, что хвостовой '**' означает
+        "все файлы рекурсивно", поэтому дописываем '/*'.
+          '**'      -> '**/*'
+          'dir/**'  -> 'dir/**/*'
+          'dir/**/' -> 'dir/**/*'
+        """
+        pat = pattern.replace("\\", "/").rstrip("/")
+        if pat == "**":
+            return "**/*"
+        if pat.endswith("/**"):
+            return pat + "/*"
+        return pat
 
 
     @staticmethod
