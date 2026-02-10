@@ -172,24 +172,19 @@ def to_dict(cfg: Config) -> dict[str, Any]:
 
 
 def _apply_list_scan_dict(ls: ListScanConfig, data: dict[str, Any]) -> ListScanConfig:
+    # функция должна быть чистой: работает ТОЛЬКО с ls и nested dict.
+    # dotted keys обрабатываются в apply_dict(cfg, data)
+    if not isinstance(ls, ListScanConfig):
+        ls = ListScanConfig()
+    if not isinstance(data, dict):
+        return ls.normalize()
+
     for k, v in data.items():
-        # list_scan: поддерживаем как вложенный dict, так и dotted keys
-        if k == "list_scan":
-            if isinstance(v, dict):
-                cfg.list_scan = _apply_list_scan_dict(cfg.list_scan, v)
-            else:
-                cfg.list_scan = ListScanConfig()
-            continue
-        if isinstance(k, str) and k.startswith("list_scan."):
-            sub = k.split(".", 1)[1]
-            if hasattr(cfg.list_scan, sub):
-                setattr(cfg.list_scan, sub, v)
-            continue
-
-
         if hasattr(ls, k):
             setattr(ls, k, v)
+
     return ls.normalize()
+
 
 
 

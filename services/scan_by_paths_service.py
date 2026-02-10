@@ -21,6 +21,7 @@ from domain.list_scan.diagnostics import (
 )
 
 from domain.models import DumpFile, ScanResult
+from typing import Iterable
 
 class _ListScanSettingsLike(Protocol):
     star_is_recursive: bool
@@ -502,16 +503,9 @@ class ScanByPathsService:
     @staticmethod
     def _apply_star_is_recursive(pattern: str, *, enabled: bool) -> str:
         """
-        star_is_recursive (см. ТЗ: считать '*' рекурсивной как '**/*'):
-        - если в паттерне уже есть компонент '**' — не трогаем (чтобы не "ломать **")
-        - иначе делаем компонентную трансформацию:
-            * '*' (отдельный компонент) -> '**/*'
-            * '*.py' / 'a*b' (звёздочка внутри компонента) -> добавляем '**/' перед компонентом
-              Примеры:
-                '*.py' -> '**/*.py'
-                'domain/*.py' -> 'domain/**/*.py'
-                'match_dir/*' -> 'match_dir/**/*'
-
+        - применяется даже если в паттерне уже есть '**'
+        - существующие '**' не ломаем, но остальные компоненты со '*' делаем рекурсивными
+          (вставляем '**/' перед таким компонентом)
         """
         if not enabled:
             return pattern
@@ -519,34 +513,38 @@ class ScanByPathsService:
         pat = pattern.replace("\\", "/")
 
         parts = pat.split("/")
-        # если пользователь уже явно задал рекурсию через '**' — не модифицируем
-        if any(p == "**" for p in parts):
-            return pat
-
         out_parts: list[str] = []
         for p in parts:
             if p == "":
                 # сохраняем ведущие/хвостовые слэши как есть
                 out_parts.append(p)
                 continue
-
+            if p == "**":
+                out_parts.append(p)
+                continue
             if "*" not in p:
                 out_parts.append(p)
                 continue
 
-            if p == "*":
-                # '*' как компонент становится '**/*'
-                if not out_parts or out_parts[-1] != "**":
-                    out_parts.append("**")
-                out_parts.append("*")
-                continue
+            # Любой компонент со '*' делаем рекурсивным:
+            # вставляем '**' перед ним (если уже не стоит)
 
-            # '*' внутри компонента (например '*.py'): делаем '**/<component>'
             if not out_parts or out_parts[-1] != "**":
                 out_parts.append("**")
             out_parts.append(p)
 
         return "/".join(out_parts)
+
+    @staticmethod
+    def _normalize_trailing_double_star(pattern: str) -> str:
+        """
+        Path.glob('a/**') на Python 3.11 возвращает в основном директории.
+        Чтобы получить файлы рекурсивно, нужен 'a/**/*'.
+        """
+        pat = pattern.replace("\\", "/")
+        if pat == "**" or pat.endswith("/**"):
+            return pat + "/*"
+        return pat
 
 
     @staticmethod
