@@ -1,10 +1,10 @@
 from __future__ import annotations
+
 import os
 from collections import Counter
 from dataclasses import dataclass, replace
-
 from pathlib import Path
-from typing import Iterable, Protocol, Any
+from typing import Any, Iterable, Protocol
 
 
 from config.model import Config
@@ -21,7 +21,6 @@ from domain.list_scan.diagnostics import (
 )
 
 from domain.models import DumpFile, ScanResult
-from typing import Iterable
 
 class _ListScanSettingsLike(Protocol):
     star_is_recursive: bool
@@ -34,10 +33,6 @@ class _ListScanSettingsOverride:
     star_is_recursive: bool
     ignore_filters: bool
     expand_dir_match: bool
-
-
-
-
 
 @dataclass(slots=True)
 class _Candidate:
@@ -538,18 +533,6 @@ class ScanByPathsService:
     @staticmethod
     def _normalize_trailing_double_star(pattern: str) -> str:
         """
-        Path.glob('a/**') на Python 3.11 возвращает в основном директории.
-        Чтобы получить файлы рекурсивно, нужен 'a/**/*'.
-        """
-        pat = pattern.replace("\\", "/")
-        if pat == "**" or pat.endswith("/**"):
-            return pat + "/*"
-        return pat
-
-
-    @staticmethod
-    def _normalize_trailing_double_star(pattern: str) -> str:
-        """
         pathlib.Path.glob("**") и "dir/**" на практике матчят в основном директории (и "."),
         а не файлы. Для семантики вкладки "Список" считаем, что хвостовой '**' означает
         "все файлы рекурсивно", поэтому дописываем '/*'.
@@ -609,11 +592,6 @@ class ScanByPathsService:
         Рекурсивный сбор файлов без добавления директорий как элементов результата.
         Используем os.walk, чтобы уважать follow_symlinks (followlinks).
         При ignore_filters=False также не заходим в игнорируемые директории (как Walker).
-        """
-
-        """
-        Рекурсивный сбор файлов без добавления директорий как элементов результата.
-        Используем os.walk, чтобы уважать follow_symlinks (followlinks).
         """
         try:
             for base, dirs, files in os.walk(dir_path, followlinks=follow_symlinks):
