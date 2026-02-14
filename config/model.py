@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
+
 from enum import Enum
 from typing import Any, Literal
 
@@ -18,6 +19,36 @@ class OutputFormat(str, Enum):
     TXT = "txt"
     MD = "md"
     JSON = "json"
+
+
+def _to_bool(value: Any, default: bool) -> bool:
+    """Нормализация bool-значений для конфигурации."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return bool(value)
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in {"1", "true", "yes", "on"}:
+            return True
+        if s in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+@dataclass(slots=True)
+class ListScanConfig:
+    """Namespace list_scan.* (вкладка "Список")."""
+
+    star_is_recursive: bool = False
+    ignore_filters: bool = False
+    expand_dir_match: bool = False
+
+    def normalize(self) -> "ListScanConfig":
+        self.star_is_recursive = _to_bool(self.star_is_recursive, False)
+        self.ignore_filters = _to_bool(self.ignore_filters, False)
+        self.expand_dir_match = _to_bool(self.expand_dir_match, False)
+        return self
 
 
 @dataclass(slots=True)
@@ -96,19 +127,14 @@ class Config:
     diff_group_modifier: str = "Ctrl"
     diff_copy_flash_duration_ms: int = 300
 
+    # list_scan namespace (v0.3.0)
+    list_scan: ListScanConfig = field(default_factory=ListScanConfig)
+
     def normalize(self) -> "Config":
         """
         Нормализовать конфиг (включая старые значения).
         """
-        if not isinstance(self.include_env, bool):
-            if isinstance(self.include_env, str):
-                s = self.include_env.strip().lower()
-                if s in {"1", "true", "yes", "on"}:
-                    self.include_env = True  # type: ignore[assignment]
-                else:
-                    self.include_env = False  # type: ignore[assignment]
-            else:
-                self.include_env = bool(self.include_env)  # type: ignore[assignment]
+        self.include_env = _to_bool(self.include_env, False)
         if self.max_file_size < 0:
             self.max_file_size = 0
         if not (0.0 <= float(self.binary_threshold) <= 1.0):
@@ -125,6 +151,18 @@ class Config:
             self.diff_copy_flash_duration_ms = 300
         if self.diff_group_modifier not in {"Ctrl", "Shift", "Alt", "Ctrl+Shift"}:
             self.diff_group_modifier = "Ctrl"
+
+        # list_scan: если битый тип — восстанавливаем дефолты/мигрируем dict
+        if isinstance(self.list_scan, dict):
+            ls = ListScanConfig()
+            for k, v in self.list_scan.items():
+                if hasattr(ls, k):
+                    setattr(ls, k, v)
+            self.list_scan = ls
+        elif not isinstance(self.list_scan, ListScanConfig):
+            self.list_scan = ListScanConfig()
+        self.list_scan.normalize()
+
         return self
 
 
@@ -133,11 +171,42 @@ def to_dict(cfg: Config) -> dict[str, Any]:
     return asdict(cfg)
 
 
+def _apply_list_scan_dict(ls: ListScanConfig, data: dict[str, Any]) -> ListScanConfig:
+    # функция должна быть чистой: работает ТОЛЬКО с ls и nested dict.
+    # dotted keys обрабатываются в apply_dict(cfg, data)
+    if not isinstance(ls, ListScanConfig):
+        ls = ListScanConfig()
+    if not isinstance(data, dict):
+        return ls.normalize()
+
+    for k, v in data.items():
+        if hasattr(ls, k):
+            setattr(ls, k, v)
+
+    return ls.normalize()
+
+
+
+
 def apply_dict(cfg: Config, data: dict[str, Any]) -> Config:
     """
     Применить dict к Config (с защитой от некорректных значений).
     """
     for k, v in data.items():
+        # list_scan: поддерживаем как вложенный dict, так и dotted keys
+        if k == "list_scan":
+            if isinstance(v, dict):
+                cfg.list_scan = _apply_list_scan_dict(cfg.list_scan, v)
+            else:
+                cfg.list_scan = ListScanConfig()
+            continue
+        if isinstance(k, str) and k.startswith("list_scan."):
+            sub = k.split(".", 1)[1]
+            if hasattr(cfg.list_scan, sub):
+                setattr(cfg.list_scan, sub, v)
+            continue
+
+
         if not hasattr(cfg, k):
             continue
         if k in ("ignore_dirs", "ignore_files"):
