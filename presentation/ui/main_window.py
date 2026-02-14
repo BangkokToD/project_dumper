@@ -12,7 +12,6 @@ from config import storage
 from domain.fs.walker import ListScanThread, ScanThread, Walker
 from domain.list_scan import ListScanDiagnostics, ListScanIssueKind, ZeroMatchesReason, parse_list_tokens
 
-
 from domain.diff.logic import get_group_indices, strip_for_copy, detect_diff_block_indices
 from domain.models import DumpFile, OutputFormat, ScanMode, ScanResult
 from services.export_service import ExportService
