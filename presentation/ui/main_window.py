@@ -61,6 +61,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._list_cur_file: DumpFile | None = None
         self._list_total_files: int = 0
         self._list_run_format: str = "txt"
+        self._list_progress_snapshot: tuple[int, int, int] | None = None
 
 
 
@@ -775,6 +776,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._list_cur_file = None
         self._list_total_files = 0
         self.list_q = queue.Queue()
+        if self.list_progress is not None:
+            self._list_progress_snapshot = (
+                self.list_progress.minimum(),
+                self.list_progress.maximum(),
+                self.list_progress.value(),
+            )
+        else:
+            self._list_progress_snapshot = None
         if self.list_output is not None:
             self.list_output.setPlainText("")
         if self.list_scan_btn is not None:
@@ -797,6 +806,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.list_timer.stop()
         if self.list_scan_btn is not None:
             self.list_scan_btn.setEnabled(True)
+
+    def _restore_list_progress_snapshot(self) -> None:
+        if self.list_progress is None or self._list_progress_snapshot is None:
+            return
+        min_v, max_v, value_v = self._list_progress_snapshot
+        self.list_progress.setRange(min_v, max_v)
+        self.list_progress.setValue(value_v)
 
     def _format_list_failfast(self, diagnostics: ListScanDiagnostics) -> str:
         kind_title: dict[ListScanIssueKind, str] = {
@@ -846,13 +862,16 @@ class MainWindow(QtWidgets.QMainWindow):
         for kind, payload in events:
             if kind == "failfast":
                 self.clear_list_output()
+                self._restore_list_progress_snapshot()
                 msg = self._format_list_failfast(payload) if isinstance(payload, ListScanDiagnostics) else str(payload)
                 QtWidgets.QMessageBox.warning(self, "Ошибки в списке", msg)
                 self._finish_list_scan()
+                self._list_progress_snapshot = None
                 return
             if kind == "error":
                 QtWidgets.QMessageBox.critical(self, "Ошибка", str(payload))
                 self._finish_list_scan()
+                self._list_progress_snapshot = None
                 return
 
         # обычный поток событий
@@ -900,6 +919,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if self.list_progress is not None:
                     self.list_progress.setValue(self.list_progress.maximum())
                 self._finish_list_scan()
+                self._list_progress_snapshot = None
                 return
 
 
