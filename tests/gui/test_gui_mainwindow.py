@@ -3,10 +3,18 @@ from __future__ import annotations
 import pytest
 from PyQt6 import QtWidgets
 
+from config.model import Config
 from presentation.ui.main_window import MainWindow
 from project_dumper import __version__
 
 pytestmark = pytest.mark.gui
+
+
+def _tab_labels(window: MainWindow) -> list[str]:
+    """Вернуть подписи вкладок главного окна."""
+    tabs = window.findChild(QtWidgets.QTabWidget)
+    assert tabs is not None
+    return [tabs.tabText(i) for i in range(tabs.count())]
 
 
 def test_mainwindow_basic(qapp) -> None:
@@ -25,6 +33,13 @@ def test_mainwindow_has_diff_tab(qapp) -> None:
     assert "Diff" in labels
 
 
+def test_mainwindow_has_expected_tab_order_with_text_tab(qapp) -> None:
+    w = MainWindow(cfg=Config())
+
+    labels = _tab_labels(w)
+    assert labels == ["Обзор", "Список", "Diff", "Текст", "Настройки"]
+
+
 def test_overview_has_scan_buttons_and_scan_mode_radios(qapp) -> None:
     w = MainWindow()
     # Проверяем, что появились две кнопки скана и 3 режима радиокнопок
@@ -34,6 +49,52 @@ def test_overview_has_scan_buttons_and_scan_mode_radios(qapp) -> None:
     assert w.mode_only_files is not None
     assert w.mode_only_tree is not None
     assert w.mode_tree_files.isChecked() is True
+
+
+def test_text_cleaner_tab_elements_created(qapp) -> None:
+    w = MainWindow(cfg=Config())
+
+    assert w.text_cleaner_input is not None
+    assert w.text_cleaner_output is not None
+    assert w.text_cleaner_scan_btn is not None
+    assert w.text_cleaner_copy_btn is not None
+    assert w.text_cleaner_save_btn is not None
+    assert w.text_cleaner_clear_btn is not None
+
+    assert w.text_cleaner_input.placeholderText() == "Вставьте текст для очистки пустых строк"
+    assert w.text_cleaner_output.isReadOnly() is True
+
+
+def test_text_cleaner_scan_applies_cleanup(qapp) -> None:
+    cfg = Config()
+    w = MainWindow(cfg=cfg)
+
+    assert w.text_cleaner_input is not None
+    assert w.text_cleaner_output is not None
+
+    w.text_cleaner_input.setPlainText("a\n\n\n---\n\n\nb")
+    w.scan_text_cleaner()
+    assert w.text_cleaner_output.toPlainText() == "a\n\n---\n\nb"
+
+    cfg.text_cleaner.preserve_separator_spacing = False
+    w.scan_text_cleaner()
+    assert w.text_cleaner_output.toPlainText() == "a\n---\nb"
+
+
+def test_text_cleaner_settings_checkbox_default_enabled(qapp) -> None:
+    w = MainWindow(cfg=Config())
+
+    assert w.chk_text_cleaner_preserve_separator_spacing is not None
+    assert w.chk_text_cleaner_preserve_separator_spacing.isChecked() is True
+
+
+def test_text_cleaner_settings_checkbox_uses_config_value(qapp) -> None:
+    cfg = Config()
+    cfg.text_cleaner.preserve_separator_spacing = False
+    w = MainWindow(cfg=cfg)
+
+    assert w.chk_text_cleaner_preserve_separator_spacing is not None
+    assert w.chk_text_cleaner_preserve_separator_spacing.isChecked() is False
 
 
 def test_diff_scan_and_new(qapp) -> None:
