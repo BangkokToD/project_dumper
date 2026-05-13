@@ -13,6 +13,7 @@ from domain.fs.walker import ListScanThread, ScanThread, Walker
 from domain.list_scan import ListScanDiagnostics, ListScanIssueKind, ZeroMatchesReason, parse_list_tokens
 
 from domain.diff.logic import get_group_indices, strip_for_copy, detect_diff_block_indices
+from domain.text_cleaner.logic import clean_empty_lines
 from domain.models import DumpFile, OutputFormat, ScanMode, ScanResult
 from services.export_service import ExportService
 from presentation.ui.diff_highlighter import DiffHighlighter
@@ -53,6 +54,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.list_copy_btn: QtWidgets.QPushButton | None = None
         self.list_save_btn: QtWidgets.QPushButton | None = None
         self.list_clear_btn: QtWidgets.QPushButton | None = None
+
+        # --- вкладка "Текст" ---
+        self.text_cleaner_input: QtWidgets.QPlainTextEdit | None = None
+        self.text_cleaner_output: QtWidgets.QPlainTextEdit | None = None
+        self.text_cleaner_scan_btn: QtWidgets.QPushButton | None = None
+        self.text_cleaner_copy_btn: QtWidgets.QPushButton | None = None
+        self.text_cleaner_save_btn: QtWidgets.QPushButton | None = None
+        self.text_cleaner_clear_btn: QtWidgets.QPushButton | None = None
+        self.chk_text_cleaner_preserve_separator_spacing: QtWidgets.QCheckBox | None = None
 
         # state для "Список" (отдельно от Обзора)
         self.list_q: "queue.Queue[tuple[str, object]]" = queue.Queue()
@@ -270,8 +280,6 @@ class MainWindow(QtWidgets.QMainWindow):
         l_splitter.setStretchFactor(0, 1)
         l_splitter.setStretchFactor(1, 3)
 
-
-
         page_diff = QtWidgets.QWidget()
         tabs.addTab(page_diff, "Diff")
         d_v = QtWidgets.QVBoxLayout(page_diff)
@@ -291,6 +299,51 @@ class MainWindow(QtWidgets.QMainWindow):
         diff_font.setPointSize(10)
         self.diff_text.setFont(diff_font)
         self.diff_highlighter = DiffHighlighter(self.diff_text.document(), self)
+
+        # ---------------------------
+        # Вкладка "Текст" (после Diff)
+        # ---------------------------
+        page_text = QtWidgets.QWidget()
+        tabs.addTab(page_text, "Текст")
+        t_v = QtWidgets.QVBoxLayout(page_text)
+
+        t_top = QtWidgets.QHBoxLayout()
+        t_v.addLayout(t_top)
+        self.text_cleaner_scan_btn = QtWidgets.QPushButton("Сканировать")
+        t_top.addStretch(1)
+        t_top.addWidget(self.text_cleaner_scan_btn)
+
+        t_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        t_v.addWidget(t_splitter, 1)
+        t_splitter.setChildrenCollapsible(True)
+        t_splitter.setHandleWidth(6)
+
+        t_left = QtWidgets.QWidget()
+        t_splitter.addWidget(t_left)
+        t_left_v = QtWidgets.QVBoxLayout(t_left)
+        self.text_cleaner_input = QtWidgets.QPlainTextEdit()
+        self.text_cleaner_input.setPlaceholderText("Вставьте текст для очистки пустых строк")
+        t_left_v.addWidget(self.text_cleaner_input, 1)
+
+        t_right = QtWidgets.QWidget()
+        t_splitter.addWidget(t_right)
+        t_right_v = QtWidgets.QVBoxLayout(t_right)
+        self.text_cleaner_output = QtWidgets.QPlainTextEdit()
+        self.text_cleaner_output.setReadOnly(True)
+        t_right_v.addWidget(self.text_cleaner_output, 1)
+
+        t_bottom = QtWidgets.QHBoxLayout()
+        t_v.addLayout(t_bottom)
+        t_bottom.addStretch(1)
+        self.text_cleaner_copy_btn = QtWidgets.QPushButton("Скопировать всё")
+        self.text_cleaner_save_btn = QtWidgets.QPushButton("Сохранить…")
+        self.text_cleaner_clear_btn = QtWidgets.QPushButton("Очистить")
+        t_bottom.addWidget(self.text_cleaner_copy_btn)
+        t_bottom.addWidget(self.text_cleaner_save_btn)
+        t_bottom.addWidget(self.text_cleaner_clear_btn)
+
+        t_splitter.setStretchFactor(0, 1)
+        t_splitter.setStretchFactor(1, 1)
 
         page_settings = QtWidgets.QWidget()
         tabs.addTab(page_settings, "Настройки")
@@ -387,6 +440,21 @@ class MainWindow(QtWidgets.QMainWindow):
         diff_form.addRow("Подсветка копирования (мс)", self.diff_flash_ms_spin)
         self.settings_box.addItem(page_diff_settings, "Diff")
 
+        # --- Категория: Текст ---
+        page_text_settings = QtWidgets.QWidget()
+        text_form = QtWidgets.QFormLayout(page_text_settings)
+
+        tc = getattr(self.w.cfg, "text_cleaner", None)
+        self.chk_text_cleaner_preserve_separator_spacing = QtWidgets.QCheckBox(
+            "Сохранять отступы --- и * * *"
+        )
+        self.chk_text_cleaner_preserve_separator_spacing.setChecked(
+            bool(getattr(tc, "preserve_separator_spacing", True))
+        )
+        text_form.addRow("", self.chk_text_cleaner_preserve_separator_spacing)
+
+        self.settings_box.addItem(page_text_settings, "Текст")
+
         # --- Категория: Внешний вид ---
         page_ui = QtWidgets.QWidget()
         ui_form = QtWidgets.QFormLayout(page_ui)
@@ -447,6 +515,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self.list_save_btn.clicked.connect(self.save_list_output)
         if self.list_clear_btn is not None:
             self.list_clear_btn.clicked.connect(self.clear_list_output)
+
+        # --- вкладка "Текст" ---
+        if self.text_cleaner_scan_btn is not None:
+            self.text_cleaner_scan_btn.clicked.connect(self.scan_text_cleaner)
+        if self.text_cleaner_copy_btn is not None:
+            self.text_cleaner_copy_btn.clicked.connect(self.copy_text_cleaner_output)
+        if self.text_cleaner_save_btn is not None:
+            self.text_cleaner_save_btn.clicked.connect(self.save_text_cleaner_output)
+        if self.text_cleaner_clear_btn is not None:
+            self.text_cleaner_clear_btn.clicked.connect(self.clear_text_cleaner)
 
 
 
@@ -673,6 +751,70 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.timer.stop()
         except queue.Empty:
             pass
+
+    # -----------------------------
+    # "Текст" (text cleaner)
+    # -----------------------------
+    def scan_text_cleaner(self) -> None:
+        """Очистить текст во вкладке "Текст" и вывести результат."""
+        if self.text_cleaner_input is None or self.text_cleaner_output is None:
+            return
+
+        raw = self.text_cleaner_input.toPlainText()
+        if not raw.strip():
+            self.text_cleaner_output.setPlainText("")
+            QtWidgets.QMessageBox.information(self, "Пусто", "Нет текста для обработки")
+            return
+
+        tc = getattr(self.w.cfg, "text_cleaner", None)
+        preserve_separator_spacing = bool(
+            getattr(tc, "preserve_separator_spacing", True)
+        )
+        cleaned = clean_empty_lines(
+            raw,
+            preserve_separator_spacing=preserve_separator_spacing,
+        )
+        self.text_cleaner_output.setPlainText(cleaned)
+
+    def copy_text_cleaner_output(self) -> None:
+        """Скопировать результат очистки текста в буфер обмена."""
+        if self.text_cleaner_output is None:
+            return
+
+        data = self.text_cleaner_output.toPlainText()
+        if not data.strip():
+            QtWidgets.QMessageBox.information(self, "Пусто", "Нечего копировать")
+            return
+
+        QtWidgets.QApplication.clipboard().setText(data)
+
+    def save_text_cleaner_output(self) -> None:
+        """Сохранить результат очистки текста в txt-файл."""
+        if self.text_cleaner_output is None:
+            return
+
+        data = self.text_cleaner_output.toPlainText()
+        if not data.strip():
+            QtWidgets.QMessageBox.information(self, "Пусто", "Нечего сохранять")
+            return
+
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Сохранить очищенный текст",
+            "cleaned_text.txt",
+            "Текст (*.txt);;Все файлы (*.*)",
+        )
+        if not path:
+            return
+
+        Path(path).write_text(data, encoding="utf-8")
+
+    def clear_text_cleaner(self) -> None:
+        """Очистить исходный текст и результат во вкладке "Текст"."""
+        if self.text_cleaner_input is not None:
+            self.text_cleaner_input.setPlainText("")
+        if self.text_cleaner_output is not None:
+            self.text_cleaner_output.setPlainText("")
 
 
     # -----------------------------
@@ -1006,6 +1148,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     cfg.list_scan.ignore_filters = bool(self.chk_list_ignore_filters.isChecked())
                 if self.chk_list_expand_dir_match is not None:
                     cfg.list_scan.expand_dir_match = bool(self.chk_list_expand_dir_match.isChecked())
+
+            # text_cleaner.* (Настройки → Текст)
+            if self.chk_text_cleaner_preserve_separator_spacing is not None:
+                cfg.text_cleaner.preserve_separator_spacing = bool(
+                    self.chk_text_cleaner_preserve_separator_spacing.isChecked()
+                )
 
 
             QtWidgets.QMessageBox.information(self, "Ок", "Настройки применены. Пересканируй проект.")

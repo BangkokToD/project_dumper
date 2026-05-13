@@ -52,6 +52,17 @@ class ListScanConfig:
 
 
 @dataclass(slots=True)
+class TextCleanerConfig:
+    """Namespace text_cleaner.* (вкладка "Текст")."""
+
+    preserve_separator_spacing: bool = True
+
+    def normalize(self) -> "TextCleanerConfig":
+        self.preserve_separator_spacing = _to_bool(self.preserve_separator_spacing, True)
+        return self
+
+
+@dataclass(slots=True)
 class Config:
     """
     Модель конфигурации приложения.
@@ -130,6 +141,9 @@ class Config:
     # list_scan namespace (v0.3.0)
     list_scan: ListScanConfig = field(default_factory=ListScanConfig)
 
+    # text_cleaner namespace
+    text_cleaner: TextCleanerConfig = field(default_factory=TextCleanerConfig)
+
     def normalize(self) -> "Config":
         """
         Нормализовать конфиг (включая старые значения).
@@ -163,6 +177,17 @@ class Config:
             self.list_scan = ListScanConfig()
         self.list_scan.normalize()
 
+        # text_cleaner: если битый тип — восстанавливаем дефолты/мигрируем dict
+        if isinstance(self.text_cleaner, dict):
+            tc = TextCleanerConfig()
+            for k, v in self.text_cleaner.items():
+                if hasattr(tc, k):
+                    setattr(tc, k, v)
+            self.text_cleaner = tc
+        elif not isinstance(self.text_cleaner, TextCleanerConfig):
+            self.text_cleaner = TextCleanerConfig()
+        self.text_cleaner.normalize()
+
         return self
 
 
@@ -186,6 +211,24 @@ def _apply_list_scan_dict(ls: ListScanConfig, data: dict[str, Any]) -> ListScanC
     return ls.normalize()
 
 
+def _apply_text_cleaner_dict(
+    tc: TextCleanerConfig,
+    data: dict[str, Any],
+) -> TextCleanerConfig:
+    # функция должна быть чистой: работает ТОЛЬКО с tc и nested dict.
+    # dotted keys обрабатываются в apply_dict(cfg, data)
+    if not isinstance(tc, TextCleanerConfig):
+        tc = TextCleanerConfig()
+    if not isinstance(data, dict):
+        return tc.normalize()
+
+    for k, v in data.items():
+        if hasattr(tc, k):
+            setattr(tc, k, v)
+
+    return tc.normalize()
+
+
 
 
 def apply_dict(cfg: Config, data: dict[str, Any]) -> Config:
@@ -204,6 +247,19 @@ def apply_dict(cfg: Config, data: dict[str, Any]) -> Config:
             sub = k.split(".", 1)[1]
             if hasattr(cfg.list_scan, sub):
                 setattr(cfg.list_scan, sub, v)
+            continue
+
+        # text_cleaner: поддерживаем как вложенный dict, так и dotted keys
+        if k == "text_cleaner":
+            if isinstance(v, dict):
+                cfg.text_cleaner = _apply_text_cleaner_dict(cfg.text_cleaner, v)
+            else:
+                cfg.text_cleaner = TextCleanerConfig()
+            continue
+        if isinstance(k, str) and k.startswith("text_cleaner."):
+            sub = k.split(".", 1)[1]
+            if hasattr(cfg.text_cleaner, sub):
+                setattr(cfg.text_cleaner, sub, v)
             continue
 
 
