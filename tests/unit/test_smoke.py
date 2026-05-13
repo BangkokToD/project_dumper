@@ -9,6 +9,7 @@ def test_imports() -> None:
     from domain.dump import markdown  # noqa: F401
     from domain.dump import text  # noqa: F401
     from domain.fs import reader  # noqa: F401
+    from domain.text_cleaner import logic as text_cleaner_logic  # noqa: F401
     from domain.fs import rules  # noqa: F401
     from domain.fs import walker  # noqa: F401
     from domain import models  # noqa: F401
