@@ -22,6 +22,7 @@ def test_config_roundtrip(tmp_path: Path, monkeypatch) -> None:
     cfg.list_scan.ignore_filters = True
     cfg.list_scan.expand_dir_match = True
 
+    cfg.text_cleaner.preserve_separator_spacing = False
     storage.save(cfg, entry_dir=entry_dir)
     rc = storage.portable_path(entry_dir)
     assert rc.exists()
@@ -35,6 +36,7 @@ def test_config_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.list_scan.star_is_recursive is True
     assert loaded.list_scan.ignore_filters is True
     assert loaded.list_scan.expand_dir_match is True
+    assert loaded.text_cleaner.preserve_separator_spacing is False
 
 
 def test_load_defaults_on_broken_file(tmp_path: Path, monkeypatch) -> None:
@@ -96,3 +98,43 @@ def test_list_scan_defaults_and_normalization() -> None:
     assert cfg3.list_scan.star_is_recursive is True
     assert cfg3.list_scan.ignore_filters is False
     assert cfg3.list_scan.expand_dir_match is True
+
+
+def test_text_cleaner_defaults_and_normalization() -> None:
+    # дефолт, если ключей нет: старые конфиги без text_cleaner не должны ломаться
+    cfg = apply_dict(Config(), {})
+    assert cfg.text_cleaner.preserve_separator_spacing is True
+
+    # битый namespace должен восстанавливаться в дефолт
+    cfg_broken = apply_dict(Config(), {"text_cleaner": "broken"})
+    assert cfg_broken.text_cleaner.preserve_separator_spacing is True
+
+    # normalize() должен уметь мигрировать dict, если он оказался в Config напрямую
+    cfg_migrated = Config()
+    cfg_migrated.text_cleaner = {"preserve_separator_spacing": "false"}  # type: ignore[assignment]
+    cfg_migrated.normalize()
+    assert cfg_migrated.text_cleaner.preserve_separator_spacing is False
+
+    cases = [
+        ("true", True),
+        ("false", False),
+        ("1", True),
+        ("0", False),
+        ("yes", True),
+        ("no", False),
+        ("on", True),
+        ("off", False),
+    ]
+
+    for raw, expected in cases:
+        cfg_nested = apply_dict(
+            Config(),
+            {"text_cleaner": {"preserve_separator_spacing": raw}},
+        )
+        assert cfg_nested.text_cleaner.preserve_separator_spacing is expected
+
+        cfg_dotted = apply_dict(
+            Config(),
+            {"text_cleaner.preserve_separator_spacing": raw},
+        )
+        assert cfg_dotted.text_cleaner.preserve_separator_spacing is expected
