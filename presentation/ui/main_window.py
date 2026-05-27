@@ -155,7 +155,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         top.addWidget(QtWidgets.QLabel("Формат:"))
         self.format_combo = QtWidgets.QComboBox()
-        self.format_combo.addItems(["txt", "md", "json"])
+        self.format_combo.addItems(["md", "txt", "json"])
         self.format_combo.setCurrentText(self.w.cfg.output_format)
         top.addWidget(self.format_combo)
         # Кнопки сканирования:
@@ -239,7 +239,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         l_top.addWidget(QtWidgets.QLabel("Формат:"))
         self.list_format_combo = QtWidgets.QComboBox()
-        self.list_format_combo.addItems(["txt", "md", "json"])
+        self.list_format_combo.addItems(["md", "txt", "json"])
         self.list_format_combo.setCurrentText(self.w.cfg.output_format)
         l_top.addWidget(self.list_format_combo)
 

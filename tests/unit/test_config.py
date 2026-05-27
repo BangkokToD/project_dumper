@@ -64,6 +64,23 @@ def test_storage_paths_are_paths(tmp_path: Path) -> None:
     assert p2.name == ".project_dumper.json"
 
 
+def test_output_format_defaults_to_markdown() -> None:
+    assert Config().output_format == "md"
+
+
+def test_output_format_normalizes_broken_value_to_markdown() -> None:
+    cfg = apply_dict(Config(), {"output_format": "broken"})
+
+    assert cfg.output_format == "md"
+
+
+def test_output_format_preserves_valid_values() -> None:
+    for value in ("txt", "md", "json"):
+        cfg = apply_dict(Config(), {"output_format": value})
+
+        assert cfg.output_format == value
+
+
 def test_list_scan_defaults_and_normalization() -> None:
     # дефолты, если ключей нет
     cfg = apply_dict(Config(), {})

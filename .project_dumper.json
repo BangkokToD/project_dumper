@@ -62,7 +62,7 @@
   "dirs_first_in_tree": true,
   "binary_threshold": 0.3,
   "detect_encoding": true,
-  "output_format": "txt",
+  "output_format": "md",
   "theme": "dark",
   "include_collapsed_in_dump": true,
   "diff_group_modifier": "Shift",

@@ -131,7 +131,7 @@ class Config:
     dirs_first_in_tree: bool = True
     binary_threshold: float = 0.30
     detect_encoding: bool = True
-    output_format: str = "txt"  # txt|md|json (пока оставляем строкой для совместимости)
+    output_format: str = "md"  # md|txt|json (пока оставляем строкой для совместимости)
     theme: Literal["light", "dark"] = "light"
 
     # Diff settings
@@ -158,7 +158,7 @@ class Config:
         if self.errors_policy not in {"strict", "replace", "ignore"}:
             self.errors_policy = "replace"
         if self.output_format not in {"txt", "md", "json"}:
-            self.output_format = "txt"
+            self.output_format = "md"
         if self.theme not in {"light", "dark"}:
             self.theme = "light"
         if self.diff_copy_flash_duration_ms < 50:

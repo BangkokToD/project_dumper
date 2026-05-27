@@ -17,6 +17,11 @@ def _tab_labels(window: MainWindow) -> list[str]:
     return [tabs.tabText(i) for i in range(tabs.count())]
 
 
+def _combo_items(combo: QtWidgets.QComboBox) -> list[str]:
+    """Вернуть значения комбобокса в текущем порядке."""
+    return [combo.itemText(i) for i in range(combo.count())]
+
+
 def test_mainwindow_basic(qapp) -> None:
     # просто проверяем, что окно создаётся без ошибок
     w = MainWindow()
@@ -38,6 +43,21 @@ def test_mainwindow_has_expected_tab_order_with_text_tab(qapp) -> None:
 
     labels = _tab_labels(w)
     assert labels == ["Обзор", "Список", "Diff", "Текст", "Настройки"]
+
+
+def test_format_combos_default_to_markdown_and_use_expected_order(qapp) -> None:
+    w = MainWindow(cfg=Config())
+
+    assert w.format_combo is not None
+    assert w.list_format_combo is not None
+
+    expected_items = ["md", "txt", "json"]
+
+    assert w.format_combo.currentText() == "md"
+    assert w.list_format_combo.currentText() == "md"
+
+    assert _combo_items(w.format_combo) == expected_items
+    assert _combo_items(w.list_format_combo) == expected_items
 
 
 def test_overview_has_scan_buttons_and_scan_mode_radios(qapp) -> None:
