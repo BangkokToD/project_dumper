@@ -10,7 +10,7 @@ from project_dumper import __version__
 from config.model import Config
 from config import storage
 from domain.fs.walker import ListScanThread, ScanThread, Walker
-from domain.list_scan import ListScanDiagnostics, ListScanIssueKind, ZeroMatchesReason, parse_list_tokens
+from domain.list_scan import ListScanDiagnostics, parse_list_tokens
 
 from domain.diff.logic import get_group_indices, strip_for_copy, detect_diff_block_indices
 from domain.text_cleaner.logic import clean_empty_lines
@@ -18,6 +18,11 @@ from domain.models import DumpFile, OutputFormat, ScanMode, ScanResult
 from services.export_service import ExportService
 from presentation.ui.diff_highlighter import DiffHighlighter
 from presentation.ui.icons import apply_app_icon
+from presentation.ui.list_scan_issues_dialog import (
+    ListScanIssueDialog,
+    ListScanIssueDialogRow,
+    rows_from_diagnostics,
+)
 from presentation.ui.theme import apply_dark_palette, apply_light_palette
 
 
@@ -955,36 +960,44 @@ class MainWindow(QtWidgets.QMainWindow):
         self.list_progress.setRange(min_v, max_v)
         self.list_progress.setValue(value_v)
 
-    def _format_list_failfast(self, diagnostics: ListScanDiagnostics) -> str:
-        kind_title: dict[ListScanIssueKind, str] = {
-            "missing": "Missing",
-            "zero_matches": "0 matches",
-            "bad_pattern_syntax": "Bad pattern syntax",
-        }
+    def _open_list_scan_issues_dialog(
+        self,
+        rows: list[ListScanIssueDialogRow],
+    ) -> set[str]:
+        """Открыть модалку проблем списка и вернуть значения для удаления.
 
-        def fmt_mult(n: int) -> str:
-            return f" ×{n}" if n and n > 1 else ""
+        Args:
+            rows: Строки проблем для отображения.
 
-        def fmt_reason(r: ZeroMatchesReason | None) -> str:
-            if r == "filtered_out":
-                return " (совпадения есть, но все отфильтрованы)"
-            if r == "no_matches":
-                return " (совпадений нет)"
-            return ""
+        Returns:
+            Значения строк, которые нужно удалить из list_input.
+        """
+        dialog = ListScanIssueDialog(rows, self)
+        dialog.exec()
+        return dialog.values_to_remove()
 
-        lines: list[str] = []
-        for g in diagnostics.groups:
-            title = kind_title.get(g.kind, str(g.kind))
-            lines.append(f"{title}:")
-            for it in g.items:
-                extra = ""
-                if g.kind == "zero_matches":
-                    extra += fmt_reason(it.reason)
-                if it.detail:
-                    extra += f" — {it.detail}"
-                lines.append(f"  • {it.value}{fmt_mult(int(it.count))}{extra}")
-            lines.append("")  # пустая строка между группами
-        return "\n".join(lines).strip()
+    def _remove_list_issue_values(self, values_to_remove: set[str]) -> None:
+        """Удалить проблемные значения из нормализованного поля списка.
+
+        Args:
+            values_to_remove: Значения, которые нужно удалить.
+        """
+        if self.list_input is None or not values_to_remove:
+            return
+
+        current_lines = self.list_input.toPlainText().splitlines()
+        remaining = [
+            line
+            for line in current_lines
+            if line not in values_to_remove
+        ]
+
+        self.list_input.setPlainText("\n".join(remaining))
+
+        if not remaining:
+            self.list_input.setPlainText("")
+            self.clear_list_output()
+
 
     def _pump_list_queue(self) -> None:
         # Читаем все события пачкой, чтобы при fail-fast:
@@ -1004,8 +1017,14 @@ class MainWindow(QtWidgets.QMainWindow):
             if kind == "failfast":
                 self.clear_list_output()
                 self._restore_list_progress_snapshot()
-                msg = self._format_list_failfast(payload) if isinstance(payload, ListScanDiagnostics) else str(payload)
-                QtWidgets.QMessageBox.warning(self, "Ошибки в списке", msg)
+                if isinstance(payload, ListScanDiagnostics):
+                    rows = rows_from_diagnostics(payload)
+                else:
+                    rows = [
+                        ListScanIssueDialogRow(kind="error", value=str(payload), reason="ошибка диагностики")
+                    ]
+                values_to_remove = self._open_list_scan_issues_dialog(rows)
+                self._remove_list_issue_values(values_to_remove)
                 self._finish_list_scan()
                 self._list_progress_snapshot = None
                 return

@@ -1,5 +1,6 @@
 {
   "ignore_hidden": true,
+  "include_env": false,
   "max_file_size": 524288,
   "encoding": "utf-8",
   "errors_policy": "replace",
@@ -64,7 +65,14 @@
   "detect_encoding": true,
   "output_format": "md",
   "theme": "dark",
-  "include_collapsed_in_dump": true,
   "diff_group_modifier": "Shift",
-  "diff_copy_flash_duration_ms": 800
+  "diff_copy_flash_duration_ms": 800,
+  "list_scan": {
+    "star_is_recursive": false,
+    "ignore_filters": false,
+    "expand_dir_match": false
+  },
+  "text_cleaner": {
+    "preserve_separator_spacing": true
+  }
 }
