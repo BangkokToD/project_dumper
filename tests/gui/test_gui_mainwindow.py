@@ -4,7 +4,17 @@ import pytest
 from PyQt6 import QtWidgets
 
 from config.model import Config
+from domain.list_scan import (
+    ListScanDiagnostics,
+    ListScanIssueGroup,
+    ListScanIssueItem,
+)
 from presentation.ui.main_window import MainWindow
+from presentation.ui.list_scan_issues_dialog import (
+    ListScanIssueDialog,
+    ListScanIssueDialogRow,
+    rows_from_diagnostics,
+)
 from project_dumper import __version__
 
 pytestmark = pytest.mark.gui
@@ -15,6 +25,11 @@ def _tab_labels(window: MainWindow) -> list[str]:
     tabs = window.findChild(QtWidgets.QTabWidget)
     assert tabs is not None
     return [tabs.tabText(i) for i in range(tabs.count())]
+
+
+def _combo_items(combo: QtWidgets.QComboBox) -> list[str]:
+    """Вернуть значения комбобокса в текущем порядке."""
+    return [combo.itemText(i) for i in range(combo.count())]
 
 
 def test_mainwindow_basic(qapp) -> None:
@@ -38,6 +53,195 @@ def test_mainwindow_has_expected_tab_order_with_text_tab(qapp) -> None:
 
     labels = _tab_labels(w)
     assert labels == ["Обзор", "Список", "Diff", "Текст", "Настройки"]
+
+
+def test_format_combos_default_to_markdown_and_use_expected_order(qapp) -> None:
+    w = MainWindow(cfg=Config())
+
+    assert w.format_combo is not None
+    assert w.list_format_combo is not None
+
+    expected_items = ["md", "txt", "json"]
+
+    assert w.format_combo.currentText() == "md"
+    assert w.list_format_combo.currentText() == "md"
+
+    assert _combo_items(w.format_combo) == expected_items
+    assert _combo_items(w.list_format_combo) == expected_items
+
+
+def test_list_scan_issue_dialog_rows_from_diagnostics() -> None:
+    diagnostics = ListScanDiagnostics(
+        groups=[
+            ListScanIssueGroup(
+                kind="missing",
+                items=[ListScanIssueItem(value="no_such_file.py", count=2)],
+            ),
+            ListScanIssueGroup(
+                kind="zero_matches",
+                items=[
+                    ListScanIssueItem(
+                        value="bad_pattern_zzz/*",
+                        reason="no_matches",
+                    )
+                ],
+            ),
+            ListScanIssueGroup(
+                kind="hidden",
+                items=[ListScanIssueItem(value=".env", detail="скрыт настройками")],
+            ),
+        ],
+    )
+
+    rows = rows_from_diagnostics(diagnostics)
+
+    assert rows == [
+        ListScanIssueDialogRow(
+            kind="missing",
+            value="no_such_file.py",
+            reason="файл не найден",
+            count=2,
+        ),
+        ListScanIssueDialogRow(
+            kind="zero_matches",
+            value="bad_pattern_zzz/*",
+            reason="совпадений нет",
+            count=1,
+        ),
+        ListScanIssueDialogRow(
+            kind="hidden",
+            value=".env",
+            reason="скрыт настройками",
+            count=1,
+        ),
+    ]
+
+
+def test_list_scan_issue_dialog_default_values_to_remove(qapp) -> None:
+    dialog = ListScanIssueDialog(
+        [
+            ListScanIssueDialogRow(kind="missing", value="a.py", reason="файл не найден"),
+            ListScanIssueDialogRow(kind="hidden", value=".env", reason="скрыт настройками"),
+        ]
+    )
+
+    assert [checkbox.isChecked() for checkbox in dialog.checkboxes] == [False, False]
+    assert dialog.values_to_remove() == {"a.py", ".env"}
+
+    dialog.checkboxes[0].setChecked(True)
+    assert dialog.values_to_remove() == {".env"}
+
+
+def test_list_scan_issue_dialog_copy_value_to_clipboard(qapp) -> None:
+    dialog = ListScanIssueDialog(
+        [
+            ListScanIssueDialogRow(
+                kind="missing",
+                value="app/web/routes.py",
+                reason="файл не найден",
+            )
+        ]
+    )
+
+    dialog.copy_value("app/web/routes.py")
+
+    assert QtWidgets.QApplication.clipboard().text() == "app/web/routes.py"
+    assert dialog.status_label is not None
+    assert dialog.status_label.text() == "Скопировано: app/web/routes.py"
+
+
+def test_list_failfast_removes_unchecked_values_without_rescan(qapp) -> None:
+    w = MainWindow(cfg=Config())
+    assert w.list_input is not None
+    assert w.list_output is not None
+    assert w.list_scan_btn is not None
+
+    diagnostics = ListScanDiagnostics(
+        groups=[
+            ListScanIssueGroup(
+                kind="missing",
+                items=[ListScanIssueItem(value="no_such_file.py", count=2)],
+            ),
+            ListScanIssueGroup(
+                kind="hidden",
+                items=[ListScanIssueItem(value=".env", detail="скрыт настройками")],
+            ),
+        ],
+    )
+
+    captured_rows: list[ListScanIssueDialogRow] = []
+    scan_list_calls = {"count": 0}
+
+    def fake_open_dialog(rows: list[ListScanIssueDialogRow]) -> set[str]:
+        captured_rows.extend(rows)
+        return {"no_such_file.py"}
+
+    def fake_scan_list() -> None:
+        scan_list_calls["count"] += 1
+
+    w._open_list_scan_issues_dialog = fake_open_dialog  # type: ignore[method-assign]
+    w.scan_list = fake_scan_list  # type: ignore[method-assign]
+    w.list_input.setPlainText("no_such_file.py\nREADME.md\n.env\nno_such_file.py")
+    w.list_output.setPlainText("old output")
+    w.list_scan_btn.setEnabled(False)
+    w._list_progress_snapshot = (0, 100, 33)
+    w.list_q.put(("failfast", diagnostics))
+
+    w._pump_list_queue()
+
+    assert [row.value for row in captured_rows] == ["no_such_file.py", ".env"]
+    assert w.list_input.toPlainText() == "README.md\n.env"
+    assert w.list_output.toPlainText() == ""
+    assert w.list_scan_btn.isEnabled() is True
+    assert scan_list_calls["count"] == 0
+
+
+def test_list_failfast_clears_input_and_output_when_all_values_removed(qapp) -> None:
+    w = MainWindow(cfg=Config())
+    assert w.list_input is not None
+    assert w.list_output is not None
+    assert w.list_scan_btn is not None
+
+    diagnostics = ListScanDiagnostics(
+        groups=[
+            ListScanIssueGroup(
+                kind="missing",
+                items=[ListScanIssueItem(value="no_such_file.py")],
+            ),
+            ListScanIssueGroup(
+                kind="zero_matches",
+                items=[
+                    ListScanIssueItem(
+                        value="bad_pattern_zzz/*",
+                        reason="no_matches",
+                    )
+                ],
+            ),
+        ],
+    )
+
+    scan_list_calls = {"count": 0}
+
+    def fake_open_dialog(_rows: list[ListScanIssueDialogRow]) -> set[str]:
+        return {"no_such_file.py", "bad_pattern_zzz/*"}
+
+    def fake_scan_list() -> None:
+        scan_list_calls["count"] += 1
+
+    w._open_list_scan_issues_dialog = fake_open_dialog  # type: ignore[method-assign]
+    w.scan_list = fake_scan_list  # type: ignore[method-assign]
+    w.list_input.setPlainText("no_such_file.py\nbad_pattern_zzz/*")
+    w.list_output.setPlainText("old output")
+    w.list_scan_btn.setEnabled(False)
+    w._list_progress_snapshot = (0, 100, 33)
+    w.list_q.put(("failfast", diagnostics))
+
+    w._pump_list_queue()
+
+    assert w.list_input.toPlainText() == ""
+    assert w.list_output.toPlainText() == ""
+    assert w.list_scan_btn.isEnabled() is True
+    assert scan_list_calls["count"] == 0
 
 
 def test_overview_has_scan_buttons_and_scan_mode_radios(qapp) -> None:

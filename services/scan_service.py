@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from domain.fs.reader import read_text_streaming
+from domain.fs.reader import ReadTextResult, read_text_file
 from domain.fs.walker import Walker
 from domain.models import DumpFile, ScanMode, ScanOptions, ScanResult
 from config.model import Config
@@ -66,10 +66,38 @@ class ScanService:
 
                 rel = p.relative_to(root).as_posix()
 
-                content = "".join(read_text_streaming(p, cfg))
-                out_files.append(DumpFile(path=rel, content=content, skipped_reason=None))
+                read_result = read_text_file(p, cfg)
+                if read_result.content is not None:
+                    out_files.append(
+                        DumpFile(path=rel, content=read_result.content, skipped_reason=None)
+                    )
+                    continue
+
+                out_files.append(
+                    DumpFile(
+                        path=rel,
+                        content=None,
+                        skipped_reason=_dump_skipped_reason(read_result),
+                    )
+                )
 
         return ScanResult(tree=tree, files=out_files)
+
+
+def _dump_skipped_reason(read_result: ReadTextResult) -> str:
+    """Сформировать skipped-текст для дампа проекта.
+
+    Args:
+        read_result: Структурированный результат чтения файла.
+
+    Returns:
+        Текст вида ``[SKIPPED: ...]`` для попадания в TXT/JSON/Markdown-дамп.
+    """
+    if read_result.skipped_reason:
+        return f"[SKIPPED: {read_result.skipped_reason}]"
+    if read_result.error:
+        return f"[SKIPPED: read error: {read_result.error}]"
+    return "[SKIPPED: unknown read problem]"
 
 
 def _is_under_any(p: Path, roots: set[Path]) -> bool:

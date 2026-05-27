@@ -99,6 +99,7 @@ def test_export_format_selection_txt_json_md(sample_project_tree: Path, monkeypa
     assert out_txt.startswith("Структура проекта")
     assert not out_txt.lstrip().startswith("{")
     assert not out_txt.startswith("# Структура проекта")
+    assert "FILE:" in out_txt
 
     # JSON: валидный json и точно не текстовый дамп
     assert out_json.lstrip().startswith("{")
@@ -106,10 +107,12 @@ def test_export_format_selection_txt_json_md(sample_project_tree: Path, monkeypa
     assert isinstance(obj, dict)
     assert "tree" in obj and "files" in obj
     assert not out_json.startswith("Структура проекта")
+    assert all(not str(file_obj["path"]).startswith("FILE:") for file_obj in obj["files"])
 
     # MD: markdown заголовок + не JSON и не TXT
-    assert out_md.startswith("# Структура проекта")
-    assert "```" in out_md
+    assert out_md.startswith("## Структура проекта")
+    assert "## FILE:" in out_md
+    assert "```python" in out_md
     assert not out_md.lstrip().startswith("{")
     assert not out_md.startswith("Структура проекта")
 

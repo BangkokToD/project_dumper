@@ -10,14 +10,16 @@ def test_export_service_txt() -> None:
     res = ScanResult(tree="root/\n  a.py", files=[DumpFile(path="a.py", content="A\n")])
     out = ExportService.export(res, OutputFormat.TXT, include_tree=True)
     assert "Структура проекта" in out
-    assert "a.py" in out
+    assert "FILE: a.py" in out
 
 
 def test_export_service_md() -> None:
     res = ScanResult(tree="root/\n  a.py", files=[DumpFile(path="a.py", content="A\n")])
     out = ExportService.export(res, OutputFormat.MD, include_tree=True)
-    assert "# Структура проекта" in out
-    assert "## a.py" in out
+    assert out.startswith("## Структура проекта")
+    assert "# Структура проекта" not in out.splitlines()
+    assert "## FILE: a.py" in out
+    assert "```python\nA\n```" in out
 
 
 def test_export_service_json() -> None:

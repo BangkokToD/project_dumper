@@ -73,7 +73,7 @@ def test_env_security_rule_applies_even_when_ignore_filters_true(tmp_path: Path)
         ScanByPathsService.scan(root, [".env", ".env.example"], cfg, LS(ignore_filters=True))
 
     diag = e.value.diagnostics
-    assert [g.kind for g in diag.groups] == ["missing"]
+    assert [g.kind for g in diag.groups] == ["hidden"]
     assert [(it.value, it.count, it.detail) for it in diag.groups[0].items] == [(".env", 1, "скрыт настройками")]
 
 
