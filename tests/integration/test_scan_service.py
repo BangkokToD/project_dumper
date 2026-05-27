@@ -84,3 +84,24 @@ def test_scan_service_mode_only_tree_returns_no_files(sample_project_tree: Path)
     res = ScanService.scan(sample_project_tree, cfg, opts)
     assert res.tree is not None
     assert res.files == []
+
+
+def test_scan_service_skipped_file_is_returned_as_dump_file(tmp_path: Path) -> None:
+    """
+    Для "Обзора" skipped-файл остаётся в результате как DumpFile.
+    """
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "big.txt").write_text("x" * 1000, encoding="utf-8")
+
+    cfg = Config()
+    cfg.max_file_size = 10
+
+    res = ScanService.scan(root, cfg, ScanOptions())
+
+    assert len(res.files) == 1
+    skipped = res.files[0]
+    assert skipped.path == "big.txt"
+    assert skipped.content is None
+    assert skipped.skipped_reason is not None
+    assert skipped.skipped_reason.startswith("[SKIPPED: size ")

@@ -3,7 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-ListScanIssueKind = Literal["missing", "bad_pattern_syntax", "zero_matches"]
+ListScanIssueKind = Literal[
+    "missing",
+    "bad_pattern_syntax",
+    "zero_matches",
+    "hidden",
+    "skipped",
+    "read_error",
+]
 ZeroMatchesReason = Literal["no_matches", "filtered_out"]
 
 

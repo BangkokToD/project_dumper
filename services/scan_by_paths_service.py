@@ -8,7 +8,7 @@ from typing import Any, Iterable, Protocol
 
 
 from config.model import Config
-from domain.fs.reader import read_text_streaming
+from domain.fs.reader import read_text_file
 from domain.fs import rules
 from infrastructure.gitignore_cache import GitignoreCache
 from domain.list_scan.models import SelectedPath, resolve_selected_paths
@@ -26,6 +26,9 @@ class _ListScanSettingsLike(Protocol):
     star_is_recursive: bool
     ignore_filters: bool
     expand_dir_match: bool
+
+
+_IssueKey = tuple[str, str | None, ZeroMatchesReason | None]
 
 
 @dataclass(slots=True)
@@ -106,11 +109,43 @@ class ScanByPathsService:
         )
 
         ordered = ScanByPathsService._dedup_and_sort(candidates)
+        candidate_counts: Counter[str] = Counter(c.rel_posix for c in candidates)
 
         out_files: list[DumpFile] = []
+        skipped_keys: list[_IssueKey] = []
+        read_error_keys: list[_IssueKey] = []
+
         for c in ordered:
-            content = "".join(read_text_streaming(c.abs_path, cfg))
-            out_files.append(DumpFile(path=c.rel_posix, content=content, skipped_reason=None))
+            read_result = read_text_file(c.abs_path, cfg)
+            if read_result.content is not None:
+                out_files.append(DumpFile(path=c.rel_posix, content=read_result.content, skipped_reason=None))
+                continue
+
+            count = max(1, int(candidate_counts.get(c.rel_posix, 1)))
+            if read_result.skipped_reason is not None:
+                skipped_keys.extend([(c.rel_posix, read_result.skipped_reason, None)] * count)
+                continue
+
+            detail = read_result.error or "unknown read error"
+            read_error_keys.extend([(c.rel_posix, detail, None)] * count)
+
+        read_groups: list[ListScanIssueGroup] = []
+        if skipped_keys:
+            read_groups.append(
+                ListScanIssueGroup(
+                    kind="skipped",
+                    items=ScanByPathsService._mk_issue_items(skipped_keys),
+                )
+            )
+        if read_error_keys:
+            read_groups.append(
+                ListScanIssueGroup(
+                    kind="read_error",
+                    items=ScanByPathsService._mk_issue_items(read_error_keys),
+                )
+            )
+        if read_groups:
+            raise ListScanValidationError(ListScanDiagnostics(groups=read_groups))
 
         return ScanResult(tree=None, files=out_files)
     @staticmethod
@@ -133,16 +168,20 @@ class ScanByPathsService:
         """
 
         # ключ: (value, detail, reason)
-        missing_keys: list[tuple[str, str | None, ZeroMatchesReason | None]] = []
-        bad_pattern_keys: list[tuple[str, str | None, ZeroMatchesReason | None]] = []
-        zero_matches_keys: list[tuple[str, str | None, ZeroMatchesReason | None]] = []
+        missing_keys: list[_IssueKey] = []
+        hidden_keys: list[_IssueKey] = []
+        bad_pattern_keys: list[_IssueKey] = []
+        zero_matches_keys: list[_IssueKey] = []
 
         # cache по raw, чтобы не дергать glob по нескольку раз на одинаковых токенах
         glob_error_cache: dict[str, str | None] = {}
 
         for s in selected:
             if s.kind == "missing":
-                missing_keys.append((s.raw, s.missing_reason, None))
+                if s.missing_reason:
+                    hidden_keys.append((s.raw, s.missing_reason, None))
+                else:
+                    missing_keys.append((s.raw, None, None))
                 continue
 
             if s.kind != "pattern":
@@ -211,6 +250,13 @@ class ScanByPathsService:
                     items=ScanByPathsService._mk_issue_items(missing_keys),
                 )
             )
+        if hidden_keys:
+            groups.append(
+                ListScanIssueGroup(
+                    kind="hidden",
+                    items=ScanByPathsService._mk_issue_items(hidden_keys),
+                )
+            )
         if zero_matches_keys:
             groups.append(
                 ListScanIssueGroup(
@@ -241,7 +287,7 @@ class ScanByPathsService:
 
     @staticmethod
     def _mk_issue_items(
-        keys: list[tuple[str, str | None, ZeroMatchesReason | None]],
+        keys: list[_IssueKey],
     ) -> list[ListScanIssueItem]:
         """Dedup + multiplier ×N (count)."""
         counts: Counter[Any] = Counter(keys)
@@ -265,7 +311,7 @@ class ScanByPathsService:
 
     @staticmethod
     def _apply_env_security(selected: list[SelectedPath], cfg: Config) -> list[SelectedPath]:
-        # include_env=false: явный запрос .env трактуем как missing (скрыт настройками).
+        # include_env=false: явный запрос .env трактуем как hidden (скрыт настройками).
         if cfg.include_env:
             return selected
         out: list[SelectedPath] = []

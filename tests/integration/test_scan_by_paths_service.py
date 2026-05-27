@@ -232,10 +232,9 @@ def test_case_17_ignore_filters_disables_ignore_hidden_dirs_files(tmp_path: Path
     assert [f.path for f in res_all.files] == [".hidden.txt", "ignored.txt", "sub/in_sub.txt", "visible.txt"]
 
 
-def test_case_17_env_policy_include_env_false_is_missing(tmp_path: Path) -> None:
+def test_case_17_env_policy_include_env_false_is_hidden(tmp_path: Path) -> None:
     """
-    17 (.env). include_env=false и .env явно запрошен → missing (fail-fast) с причиной "Файл скрыт настройками."
-    (Тест допускает старую формулировку, если она у тебя уже зафиксирована кодом.)
+    17 (.env). include_env=false и .env явно запрошен → hidden (fail-fast).
     """
     root = _mk_proj(tmp_path)
     (root / ".env").write_text("SECRET=1\n", encoding="utf-8")
@@ -245,10 +244,10 @@ def test_case_17_env_policy_include_env_false_is_missing(tmp_path: Path) -> None
         ScanByPathsService.scan(root, [".env"], cfg, cfg.list_scan)
 
     diag = e.value.diagnostics
-    missing = _get_group(diag, "missing")
-    _assert_single_item(missing, value=".env")
+    hidden = _get_group(diag, "hidden")
+    _assert_single_item(hidden, value=".env")
 
-    detail = missing.items[0].detail
+    detail = hidden.items[0].detail
     assert detail is not None
     assert detail in ("Файл скрыт настройками.", "скрыт настройками")
 
@@ -302,3 +301,41 @@ def test_case_19_pattern_matched_only_dirs_and_expand_dir_match_false_is_zero_ma
     diag = e.value.diagnostics
     zm = _get_group(diag, "zero_matches")
     _assert_single_item(zm, value="domain/*", reason="no_matches")
+
+
+def test_list_scan_skipped_size_file_becomes_diagnostic_issue(tmp_path: Path) -> None:
+    """
+    Файл, пропущенный из-за размера, во вкладке "Список" становится диагностикой.
+    """
+    root = _mk_proj(tmp_path)
+    (root / "big.txt").write_text("x" * 1000, encoding="utf-8")
+
+    cfg = Config()
+    cfg.max_file_size = 10
+
+    with pytest.raises(ListScanValidationError) as e:
+        ScanByPathsService.scan(root, ["big.txt", "big.txt"], cfg, cfg.list_scan)
+
+    diag = e.value.diagnostics
+    skipped = _get_group(diag, "skipped")
+    assert [(it.value, it.count) for it in skipped.items] == [("big.txt", 2)]
+    assert skipped.items[0].detail is not None
+    assert "size" in skipped.items[0].detail
+
+
+def test_list_scan_skipped_binary_file_becomes_diagnostic_issue(tmp_path: Path) -> None:
+    """
+    Бинарный файл во вкладке "Список" становится диагностикой.
+    """
+    root = _mk_proj(tmp_path)
+    (root / "binary.dat").write_bytes(b"\x00\x01\x02\x03")
+
+    cfg = Config()
+
+    with pytest.raises(ListScanValidationError) as e:
+        ScanByPathsService.scan(root, ["binary.dat"], cfg, cfg.list_scan)
+
+    diag = e.value.diagnostics
+    skipped = _get_group(diag, "skipped")
+    _assert_single_item(skipped, value="binary.dat")
+    assert skipped.items[0].detail == "binary content detected"
