@@ -29,7 +29,7 @@ class TextFormatter(DumpFormatter):
                 parts.append(SEP + "\n\n")
             has_any_file = True
 
-            parts.append(f.path + "\n\n")
+            parts.append(f"FILE: {f.path}\n\n")
             if f.content is None:
                 parts.append((f.skipped_reason or "") + "\n\n")
             else:
