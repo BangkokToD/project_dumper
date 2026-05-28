@@ -161,7 +161,7 @@ def test_list_scan_issue_dialog_copy_value_to_clipboard(qapp) -> None:
     assert dialog.status_label.text() == "Скопировано: app/web/routes.py"
 
 
-def test_list_failfast_removes_unchecked_values_without_rescan(qapp) -> None:
+def test_list_failfast_removes_unchecked_values_and_auto_rescans(qapp) -> None:
     w = MainWindow(cfg=Config())
     assert w.list_input is not None
     assert w.list_output is not None
@@ -204,7 +204,7 @@ def test_list_failfast_removes_unchecked_values_without_rescan(qapp) -> None:
     assert w.list_input.toPlainText() == "README.md\n.env"
     assert w.list_output.toPlainText() == ""
     assert w.list_scan_btn.isEnabled() is True
-    assert scan_list_calls["count"] == 0
+    assert scan_list_calls["count"] == 1
 
 
 def test_list_failfast_clears_input_and_output_when_all_values_removed(qapp) -> None:
@@ -253,6 +253,48 @@ def test_list_failfast_clears_input_and_output_when_all_values_removed(qapp) -> 
     assert w.list_output.toPlainText() == ""
     assert w.list_scan_btn.isEnabled() is True
     assert scan_list_calls["count"] == 0
+
+
+def test_list_failfast_auto_rescans_even_when_no_values_removed(qapp) -> None:
+    w = MainWindow(cfg=Config())
+    assert w.list_input is not None
+    assert w.list_output is not None
+    assert w.list_scan_btn is not None
+
+    diagnostics = ListScanDiagnostics(
+        groups=[
+            ListScanIssueGroup(
+                kind="missing",
+                items=[ListScanIssueItem(value="no_such_file.py")],
+            ),
+        ],
+    )
+
+    captured_rows: list[ListScanIssueDialogRow] = []
+    scan_list_calls = {"count": 0}
+
+    def fake_open_dialog(rows: list[ListScanIssueDialogRow]) -> set[str]:
+        captured_rows.extend(rows)
+        return set()
+
+    def fake_scan_list() -> None:
+        scan_list_calls["count"] += 1
+
+    w._open_list_scan_issues_dialog = fake_open_dialog  # type: ignore[method-assign]
+    w.scan_list = fake_scan_list  # type: ignore[method-assign]
+    w.list_input.setPlainText("no_such_file.py\nREADME.md")
+    w.list_output.setPlainText("old output")
+    w.list_scan_btn.setEnabled(False)
+    w._list_progress_snapshot = (0, 100, 33)
+    w.list_q.put(("failfast", diagnostics))
+
+    w._pump_list_queue()
+
+    assert [row.value for row in captured_rows] == ["no_such_file.py"]
+    assert w.list_input.toPlainText() == "no_such_file.py\nREADME.md"
+    assert w.list_output.toPlainText() == ""
+    assert w.list_scan_btn.isEnabled() is True
+    assert scan_list_calls["count"] == 1
 
 
 def test_overview_has_scan_buttons_and_scan_mode_radios(qapp) -> None:

@@ -1008,6 +1008,22 @@ class MainWindow(QtWidgets.QMainWindow):
             self.list_input.setPlainText("")
             self.clear_list_output()
 
+    def _list_input_has_tokens(self) -> bool:
+        """Проверить, остались ли строки для сканирования во вкладке "Список".
+
+        Returns:
+            True, если после нормализации в левом поле остался хотя бы один токен.
+        """
+        if self.list_input is None:
+            return False
+
+        return bool(parse_list_tokens(self.list_input.toPlainText()))
+
+    def _rescan_list_after_issue_dialog_if_needed(self) -> None:
+        """Запустить автоперескан после закрытия модалки, если список не пустой."""
+        if self._list_input_has_tokens():
+            self.scan_list()
+
 
     def _pump_list_queue(self) -> None:
         # Читаем все события пачкой, чтобы при fail-fast:
@@ -1037,6 +1053,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._remove_list_issue_values(values_to_remove)
                 self._finish_list_scan()
                 self._list_progress_snapshot = None
+                self._rescan_list_after_issue_dialog_if_needed()
                 return
             if kind == "error":
                 QtWidgets.QMessageBox.critical(self, "Ошибка", str(payload))
