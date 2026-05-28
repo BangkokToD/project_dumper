@@ -143,6 +143,21 @@ class TermReplaceService:
         )
 
     @staticmethod
+    def has_git_repository(root: Path) -> bool:
+        """Проверить наличие Git-репозитория в корне проекта.
+
+        Метод нужен только для UI-предупреждения перед массовым применением
+        замен. Dirty state не проверяется, внешние команды не вызываются.
+
+        Args:
+            root: Корневая директория проекта.
+
+        Returns:
+            True, если в корне есть ``.git`` как директория или файл.
+        """
+        return (root / ".git").exists()
+
+    @staticmethod
     def _read_project_text_files(root: Path, cfg: Config) -> dict[str, str]:
         """Прочитать текстовые файлы проекта с учётом правил Project Dumper.
 

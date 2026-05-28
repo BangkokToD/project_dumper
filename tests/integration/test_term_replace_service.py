@@ -365,3 +365,35 @@ def test_term_replace_service_apply_preview_blocks_hash_conflict_and_continues(
     assert report.applied_changes == 1
     assert report.skipped_changes == 3
     assert report.conflicted_files == ["a.txt"]
+
+
+def test_term_replace_service_has_git_repository_returns_true_for_git_dir(
+    tmp_path: Path,
+) -> None:
+    """Возвращает True, если в корне проекта есть директория .git."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / ".git").mkdir()
+
+    assert TermReplaceService.has_git_repository(root) is True
+
+
+def test_term_replace_service_has_git_repository_returns_true_for_git_file(
+    tmp_path: Path,
+) -> None:
+    """Возвращает True, если .git является файлом worktree/submodule."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / ".git").write_text("gitdir: ../.git/worktrees/proj\n", encoding="utf-8")
+
+    assert TermReplaceService.has_git_repository(root) is True
+
+
+def test_term_replace_service_has_git_repository_returns_false_without_git(
+    tmp_path: Path,
+) -> None:
+    """Возвращает False, если .git в корне проекта отсутствует."""
+    root = tmp_path / "proj"
+    root.mkdir()
+
+    assert TermReplaceService.has_git_repository(root) is False
