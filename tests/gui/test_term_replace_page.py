@@ -4,7 +4,14 @@ import pytest
 
 from PyQt6 import QtWidgets
 
+from domain.term_replace.maps import (
+    ReplacementMap,
+    ReplacementMapError,
+    replacement_map_from_json,
+    replacement_map_to_json,
+)
 from domain.term_replace.models import TermOccurrence, TermVariant
+from domain.term_replace.models import ReplacementRule
 from presentation.ui.term_replace_page import TermReplacePage
 
 pytestmark = pytest.mark.gui
@@ -40,6 +47,34 @@ def _checkbox_at(table: QtWidgets.QTableWidget, row: int) -> QtWidgets.QCheckBox
     checkbox = holder.findChild(QtWidgets.QCheckBox)
     assert checkbox is not None
     return checkbox
+
+
+def _variant(text: str, *, count: int = 1, file_count: int = 1) -> TermVariant:
+    """Создать тестовый TermVariant.
+
+    Args:
+        text: Точная найденная форма.
+        count: Количество вхождений.
+        file_count: Количество файлов.
+
+    Returns:
+        Тестовая форма термина.
+    """
+    return TermVariant(
+        text=text,
+        count=count,
+        file_count=file_count,
+        occurrences=[
+            TermOccurrence(
+                file_path="README.md",
+                line_number=1,
+                column_start=0,
+                column_end=len(text),
+                matched_text=text,
+                line_text=f"{text} проверил задачу",
+            )
+        ],
+    )
 
 
 def test_term_replace_page_creates_required_controls(qapp) -> None:
@@ -298,3 +333,254 @@ def test_term_replace_page_scan_no_variants_shows_information(
 
     assert page.variants_table.rowCount() == 0
     assert messages == [("Ничего не найдено", "Формы термина не найдены.")]
+
+
+def test_term_replace_page_save_replacement_map_writes_json(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Сохраняет JSON-карту замен из таблицы."""
+    path = tmp_path / "map.json"
+    page = TermReplacePage()
+    assert page.source_term_edit is not None
+    assert page.variants_table is not None
+
+    page.source_term_edit.setText("супервайзер")
+    page._render_variants(
+        [
+            _variant("Супервайзер", count=2, file_count=1),
+            _variant("супервайзер", count=1, file_count=1),
+        ]
+    )
+    page.variants_table.item(0, 4).setText("Руководитель")
+    page.variants_table.item(1, 4).setText("руководитель")
+    _checkbox_at(page.variants_table, 1).setChecked(False)
+
+    def fake_get_save_file_name(*_args, **_kwargs):
+        return str(path), "JSON (*.json)"
+
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        fake_get_save_file_name,
+    )
+
+    page.save_replacement_map()
+
+    replacement_map = replacement_map_from_json(path.read_text(encoding="utf-8"))
+    assert replacement_map.source_term == "супервайзер"
+    assert replacement_map.rules == [
+        ReplacementRule(
+            source="Супервайзер",
+            replacement="Руководитель",
+            enabled=True,
+        ),
+        ReplacementRule(
+            source="супервайзер",
+            replacement="руководитель",
+            enabled=False,
+        ),
+    ]
+
+
+def test_term_replace_page_save_replacement_map_requires_source_term(
+    qapp,
+    monkeypatch,
+) -> None:
+    """Показывает warning, если при сохранении карты не указан термин."""
+    messages: list[tuple[str, str]] = []
+
+    def fake_warning(_parent, title, text):
+        messages.append((title, text))
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", fake_warning)
+
+    page = TermReplacePage()
+    page.save_replacement_map()
+
+    assert messages == [("Нет термина", "Укажи термин для карты.")]
+
+
+def test_term_replace_page_load_replacement_map_applies_rules_to_existing_table(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Загружает карту и применяет правила к уже найденным формам."""
+    path = tmp_path / "map.json"
+    path.write_text(
+        replacement_map_to_json(
+            ReplacementMap(
+                source_term="супервайзер",
+                rules=[
+                    ReplacementRule(
+                        source="Супервайзер",
+                        replacement="Руководитель",
+                        enabled=False,
+                    ),
+                    ReplacementRule(
+                        source="Супервайзера",
+                        replacement="Руководителя",
+                        enabled=True,
+                    ),
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_get_open_file_name(*_args, **_kwargs):
+        return str(path), "JSON (*.json)"
+
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getOpenFileName",
+        fake_get_open_file_name,
+    )
+
+    page = TermReplacePage()
+    assert page.source_term_edit is not None
+    assert page.variants_table is not None
+
+    page.source_term_edit.setText("старый")
+    page._render_variants(
+        [
+            _variant("Супервайзер"),
+            _variant("Супервайзера"),
+            _variant("супервайзер"),
+        ]
+    )
+
+    page.load_replacement_map()
+
+    assert page.source_term_edit.text() == "супервайзер"
+    assert page.variants_table.item(0, 4).text() == "Руководитель"
+    assert _checkbox_at(page.variants_table, 0).isChecked() is False
+    assert page.variants_table.item(1, 4).text() == "Руководителя"
+    assert _checkbox_at(page.variants_table, 1).isChecked() is True
+    assert page.variants_table.item(2, 4).text() == ""
+    assert _checkbox_at(page.variants_table, 2).isChecked() is True
+
+
+def test_term_replace_page_load_replacement_map_before_scan_applies_after_scan(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Хранит загруженную карту и применяет её после следующего сканирования."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    path = tmp_path / "map.json"
+    path.write_text(
+        replacement_map_to_json(
+            ReplacementMap(
+                source_term="супервайзер",
+                rules=[
+                    ReplacementRule(
+                        source="Супервайзер",
+                        replacement="Руководитель",
+                        enabled=False,
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getOpenFileName",
+        lambda *_args, **_kwargs: (str(path), "JSON (*.json)"),
+    )
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.scan",
+        lambda *_args, **_kwargs: [_variant("Супервайзер")],
+    )
+
+    page = TermReplacePage()
+    assert page.project_path_edit is not None
+    assert page.source_term_edit is not None
+    assert page.variants_table is not None
+
+    page.load_replacement_map()
+    page.project_path_edit.setText(str(root))
+    page.scan_variants()
+
+    assert page.source_term_edit.text() == "супервайзер"
+    assert page.variants_table.rowCount() == 1
+    assert page.variants_table.item(0, 4).text() == "Руководитель"
+    assert _checkbox_at(page.variants_table, 0).isChecked() is False
+
+
+def test_term_replace_page_load_replacement_map_shows_warning_for_broken_json(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Показывает понятную ошибку при битом JSON карты."""
+    path = tmp_path / "broken.json"
+    path.write_text("{ broken json", encoding="utf-8")
+    messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getOpenFileName",
+        lambda *_args, **_kwargs: (str(path), "JSON (*.json)"),
+    )
+
+    def fake_warning(_parent, title, text):
+        messages.append((title, text))
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", fake_warning)
+
+    page = TermReplacePage()
+    page.load_replacement_map()
+
+    assert len(messages) == 1
+    assert messages[0][0] == "Ошибка карты"
+    assert "Некорректный JSON" in messages[0][1]
+
+
+def test_term_replace_page_load_replacement_map_resets_preview_state(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Сбрасывает preview-состояние после загрузки карты."""
+    path = tmp_path / "map.json"
+    path.write_text(
+        replacement_map_to_json(
+            ReplacementMap(
+                source_term="супервайзер",
+                rules=[
+                    ReplacementRule(
+                        source="Супервайзер",
+                        replacement="Руководитель",
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getOpenFileName",
+        lambda *_args, **_kwargs: (str(path), "JSON (*.json)"),
+    )
+
+    page = TermReplacePage()
+    assert page.apply_btn is not None
+    assert page.variants_table is not None
+    assert page.preview_placeholder_label is not None
+
+    page._render_variants([_variant("Супервайзер")])
+    page.variants_table.item(0, 5).setText("1 / 1")
+    page.apply_btn.setEnabled(True)
+    page.preview_placeholder_label.setText("Preview построен")
+
+    page.load_replacement_map()
+
+    assert page.apply_btn.isEnabled() is False
+    assert page.preview_placeholder_label.text() == "Preview пока не построен"
+    assert page.variants_table.item(0, 5).text() == "—"
