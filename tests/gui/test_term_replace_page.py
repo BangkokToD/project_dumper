@@ -6,13 +6,18 @@ from PyQt6 import QtWidgets
 
 from domain.term_replace.maps import (
     ReplacementMap,
-    ReplacementMapError,
     replacement_map_from_json,
     replacement_map_to_json,
 )
 from domain.term_replace.models import TermOccurrence, TermVariant
 from domain.term_replace.models import ReplacementRule
 from presentation.ui.term_replace_page import TermReplacePage
+from domain.term_replace.models import (
+    ReplacementPreview,
+    ReplacementPreviewChange,
+    ReplacementPreviewFile,
+)
+from presentation.ui.term_replace_preview import TermReplacePreviewChangeCard
 
 pytestmark = pytest.mark.gui
 
@@ -74,6 +79,64 @@ def _variant(text: str, *, count: int = 1, file_count: int = 1) -> TermVariant:
                 line_text=f"{text} проверил задачу",
             )
         ],
+    )
+
+
+def _preview_change(
+    *,
+    change_id: str,
+    file_path: str,
+    line_number: int,
+    source: str,
+    replacement: str,
+    line_before: str,
+    line_after: str,
+    column_start: int,
+) -> ReplacementPreviewChange:
+    """Создать тестовое preview-изменение.
+
+    Args:
+        change_id: Идентификатор изменения.
+        file_path: Путь файла.
+        line_number: Номер строки.
+        source: Исходная форма.
+        replacement: Замена.
+        line_before: Строка до замены.
+        line_after: Строка после замены.
+        column_start: Начальная колонка.
+
+    Returns:
+        Preview-изменение.
+    """
+    return ReplacementPreviewChange(
+        id=change_id,
+        file_path=file_path,
+        line_number=line_number,
+        column_start=column_start,
+        column_end=column_start + len(source),
+        source=source,
+        replacement=replacement,
+        line_before=line_before,
+        line_after=line_after,
+    )
+
+
+def _preview_with_files(
+    files: list[tuple[str, list[ReplacementPreviewChange]]],
+) -> ReplacementPreview:
+    """Создать тестовый preview по файлам.
+
+    Args:
+        files: Пары ``file_path`` и changes.
+
+    Returns:
+        Preview для тестов UI.
+    """
+    return ReplacementPreview(
+        files=[
+            ReplacementPreviewFile(file_path=file_path, content_hash="hash", changes=changes)
+            for file_path, changes in files
+        ]
     )
 
 
@@ -584,3 +647,251 @@ def test_term_replace_page_load_replacement_map_resets_preview_state(
     assert page.apply_btn.isEnabled() is False
     assert page.preview_placeholder_label.text() == "Preview пока не построен"
     assert page.variants_table.item(0, 5).text() == "—"
+
+
+def test_term_replace_page_build_preview_renders_grouped_cards(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Строит preview, группирует карточки по файлам и включает Apply."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    preview = _preview_with_files(
+        [
+            (
+                "README.md",
+                [
+                    _preview_change(
+                        change_id="1",
+                        file_path="README.md",
+                        line_number=42,
+                        source="Супервайзер",
+                        replacement="Руководитель",
+                        line_before="Супервайзер проверил задачу",
+                        line_after="Руководитель проверил задачу",
+                        column_start=0,
+                    )
+                ],
+            ),
+            (
+                "docs/notes.txt",
+                [
+                    _preview_change(
+                        change_id="2",
+                        file_path="docs/notes.txt",
+                        line_number=7,
+                        source="супервайзеру",
+                        replacement="руководителю",
+                        line_before="Письмо супервайзеру отправлено",
+                        line_after="Письмо руководителю отправлено",
+                        column_start=7,
+                    )
+                ],
+            ),
+        ]
+    )
+    captured: dict[str, object] = {}
+
+    def fake_build_preview(scan_root, rules, cfg):
+        captured["root"] = scan_root
+        captured["rules"] = list(rules)
+        captured["cfg"] = cfg
+        return preview
+
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.build_preview",
+        fake_build_preview,
+    )
+
+    page = TermReplacePage()
+    assert page.project_path_edit is not None
+    assert page.variants_table is not None
+    assert page.apply_btn is not None
+
+    page.project_path_edit.setText(str(root))
+    page._render_variants(
+        [
+            _variant("Супервайзер"),
+            _variant("супервайзеру"),
+        ]
+    )
+    page.variants_table.item(0, 4).setText("Руководитель")
+    page.variants_table.item(1, 4).setText("руководителю")
+
+    page.build_preview()
+
+    assert captured["root"] == root
+    rules = captured["rules"]
+    assert rules == [
+        ReplacementRule(source="Супервайзер", replacement="Руководитель"),
+        ReplacementRule(source="супервайзеру", replacement="руководителю"),
+    ]
+
+    file_labels = page.findChildren(QtWidgets.QLabel, "term-replace-preview-file-label")
+    assert [label.text() for label in file_labels] == [
+        "File: README.md",
+        "File: docs/notes.txt",
+    ]
+
+    cards = page.findChildren(TermReplacePreviewChangeCard)
+    assert len(cards) == 2
+    assert cards[0].checkbox is not None
+    assert cards[0].checkbox.text() == "Line 42"
+    assert cards[0].before_text is not None
+    assert cards[0].after_text is not None
+    assert cards[0].before_text.isReadOnly() is True
+    assert "Супервайзер проверил задачу" in cards[0].before_text.toPlainText()
+    assert "Руководитель проверил задачу" in cards[0].after_text.toPlainText()
+
+    assert page.variants_table.item(0, 5).text() == "1 / 1"
+    assert page.variants_table.item(1, 5).text() == "1 / 1"
+    assert page.apply_btn.isEnabled() is True
+
+
+def test_term_replace_page_build_preview_filters_disabled_and_empty_rules(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Передаёт в preview только включённые формы с непустой заменой."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    captured: dict[str, object] = {}
+    messages: list[tuple[str, str]] = []
+
+    def fake_build_preview(_root, rules, _cfg):
+        captured["rules"] = list(rules)
+        return _preview_with_files([])
+
+    def fake_information(_parent, title, text):
+        messages.append((title, text))
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", fake_information)
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.build_preview",
+        fake_build_preview,
+    )
+
+    page = TermReplacePage()
+    assert page.project_path_edit is not None
+    assert page.variants_table is not None
+
+    page.project_path_edit.setText(str(root))
+    page._render_variants(
+        [
+            _variant("Супервайзер"),
+            _variant("Супервайзера"),
+            _variant("супервайзер"),
+        ]
+    )
+    page.variants_table.item(0, 4).setText("Руководитель")
+    page.variants_table.item(1, 4).setText("")
+    page.variants_table.item(2, 4).setText("руководитель")
+    _checkbox_at(page.variants_table, 2).setChecked(False)
+
+    page.build_preview()
+
+    assert captured["rules"] == [
+        ReplacementRule(source="Супервайзер", replacement="Руководитель")
+    ]
+    assert messages == [("Preview пуст", "Нет изменений для preview.")]
+
+
+def test_term_replace_page_preview_checkbox_updates_change_and_counter(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Checkbox карточки меняет только конкретное изменение и счётчик формы."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    first = _preview_change(
+        change_id="1",
+        file_path="README.md",
+        line_number=1,
+        source="Супервайзер",
+        replacement="Руководитель",
+        line_before="Супервайзер и Супервайзер",
+        line_after="Руководитель и Супервайзер",
+        column_start=0,
+    )
+    second = _preview_change(
+        change_id="2",
+        file_path="README.md",
+        line_number=1,
+        source="Супервайзер",
+        replacement="Руководитель",
+        line_before="Супервайзер и Супервайзер",
+        line_after="Супервайзер и Руководитель",
+        column_start=14,
+    )
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.build_preview",
+        lambda *_args, **_kwargs: _preview_with_files([("README.md", [first, second])]),
+    )
+
+    page = TermReplacePage()
+    assert page.project_path_edit is not None
+    assert page.variants_table is not None
+    assert page.apply_btn is not None
+
+    page.project_path_edit.setText(str(root))
+    page._render_variants([_variant("Супервайзер", count=2)])
+    page.variants_table.item(0, 4).setText("Руководитель")
+    page.build_preview()
+
+    cards = page.findChildren(TermReplacePreviewChangeCard)
+    assert len(cards) == 2
+    assert page.variants_table.item(0, 5).text() == "2 / 2"
+    assert page.apply_btn.isEnabled() is True
+
+    assert cards[0].checkbox is not None
+    cards[0].checkbox.setChecked(False)
+
+    assert first.enabled is False
+    assert second.enabled is True
+    assert page.variants_table.item(0, 5).text() == "1 / 2"
+    assert page.apply_btn.isEnabled() is True
+
+    assert cards[1].checkbox is not None
+    cards[1].checkbox.setChecked(False)
+
+    assert page.variants_table.item(0, 5).text() == "0 / 2"
+    assert page.apply_btn.isEnabled() is False
+
+
+def test_term_replace_page_build_preview_without_rules_shows_warning(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Показывает warning, если нет включённых форм с replacement."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    messages: list[tuple[str, str]] = []
+    build_called = {"value": False}
+
+    def fake_warning(_parent, title, text):
+        messages.append((title, text))
+
+    def fake_build_preview(*_args, **_kwargs):
+        build_called["value"] = True
+        return _preview_with_files([])
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", fake_warning)
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.build_preview",
+        fake_build_preview,
+    )
+
+    page = TermReplacePage()
+    assert page.project_path_edit is not None
+    assert page.variants_table is not None
+
+    page.project_path_edit.setText(str(root))
+    page._render_variants([_variant("Супервайзер")])
+    page.build_preview()
+
+    assert build_called["value"] is False
+    assert messages == [("Нет замен", "Включи хотя бы одну форму и укажи замену.")]

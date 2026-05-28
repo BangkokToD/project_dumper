@@ -11,7 +11,12 @@ from domain.term_replace.maps import (
     replacement_map_from_json,
     replacement_map_to_json,
 )
-from domain.term_replace.models import ReplacementRule, TermVariant
+from domain.term_replace.models import (
+    ReplacementPreview,
+    ReplacementRule,
+    TermVariant,
+)
+from presentation.ui.term_replace_preview import TermReplacePreviewChangeCard
 from services.term_replace_service import TermReplaceService
 
 class TermReplacePage(QtWidgets.QWidget):
@@ -46,6 +51,8 @@ class TermReplacePage(QtWidgets.QWidget):
         super().__init__(parent)
         self._cfg = cfg
         self._loaded_replacement_map: ReplacementMap | None = None
+        self._current_preview: ReplacementPreview | None = None
+        self._preview_cards: list[TermReplacePreviewChangeCard] = []
 
         self.project_path_edit: QtWidgets.QLineEdit | None = None
         self.source_term_edit: QtWidgets.QLineEdit | None = None
@@ -196,6 +203,8 @@ class TermReplacePage(QtWidgets.QWidget):
             self.save_map_btn.clicked.connect(self.save_replacement_map)
         if self.load_map_btn is not None:
             self.load_map_btn.clicked.connect(self.load_replacement_map)
+        if self.preview_btn is not None:
+            self.preview_btn.clicked.connect(self.build_preview)
 
     def scan_variants(self) -> None:
         """Просканировать проект и заполнить таблицу найденных форм."""
@@ -279,6 +288,134 @@ class TermReplacePage(QtWidgets.QWidget):
             return parent_cfg
 
         return Config()
+
+    def build_preview(self) -> None:
+        """Построить и отрисовать preview по текущим правилам таблицы."""
+        root = self._validated_root()
+        if root is None:
+            return
+
+        rules = self._collect_preview_rules_from_table()
+        if not rules:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Нет замен",
+                "Включи хотя бы одну форму и укажи замену.",
+            )
+            return
+
+        preview = TermReplaceService.build_preview(
+            root,
+            rules,
+            self._current_config(),
+        )
+        self._current_preview = preview
+        self._render_preview(preview)
+        self._update_preview_counters()
+        self._update_apply_button_state()
+
+        if not self._preview_cards:
+            QtWidgets.QMessageBox.information(
+                self,
+                "Preview пуст",
+                "Нет изменений для preview.",
+            )
+
+    def _collect_preview_rules_from_table(self) -> list[ReplacementRule]:
+        """Собрать включённые правила с непустым replacement для preview.
+
+        Returns:
+            Список правил, которые должны участвовать в preview.
+        """
+        rules = [
+            rule
+            for rule in self._collect_rules_from_table()
+            if rule.enabled and rule.replacement != ""
+        ]
+        return rules
+
+    def _render_preview(self, preview: ReplacementPreview) -> None:
+        """Отрисовать preview по файлам.
+
+        Args:
+            preview: Preview изменений для отображения.
+        """
+        self._clear_preview_layout()
+        self._preview_cards = []
+        self.preview_placeholder_label = None
+
+        if self.preview_layout is None:
+            return
+
+        for preview_file in preview.files:
+            file_label = QtWidgets.QLabel(f"File: {preview_file.file_path}")
+            file_label.setObjectName("term-replace-preview-file-label")
+            font = file_label.font()
+            font.setBold(True)
+            file_label.setFont(font)
+            self.preview_layout.addWidget(file_label)
+
+            for change in preview_file.changes:
+                card = TermReplacePreviewChangeCard(
+                    change,
+                    on_enabled_changed=self._on_preview_change_enabled_changed,
+                    parent=self.preview_container,
+                )
+                self.preview_layout.addWidget(card)
+                self._preview_cards.append(card)
+
+        if not self._preview_cards:
+            self._show_preview_placeholder("Preview пуст")
+            return
+
+        self.preview_layout.addStretch(1)
+
+    def _on_preview_change_enabled_changed(self) -> None:
+        """Пересчитать состояние страницы после checkbox конкретного preview."""
+        self._update_preview_counters()
+        self._update_apply_button_state()
+
+    def _update_preview_counters(self) -> None:
+        """Обновить колонку ``К применению`` по текущему preview."""
+        if self.variants_table is None:
+            return
+
+        counts: dict[str, list[int]] = {}
+        if self._current_preview is not None:
+            for preview_file in self._current_preview.files:
+                for change in preview_file.changes:
+                    enabled_count, total_count = counts.setdefault(change.source, [0, 0])
+                    if change.enabled:
+                        enabled_count += 1
+                    total_count += 1
+                    counts[change.source] = [enabled_count, total_count]
+
+        for row in range(self.variants_table.rowCount()):
+            source = self._table_item_text(row, 1)
+            enabled_count, total_count = counts.get(source, [0, 0])
+            self._set_readonly_item(row, 5, f"{enabled_count} / {total_count}")
+
+    def _update_apply_button_state(self) -> None:
+        """Обновить доступность кнопки применения по текущему preview."""
+        if self.apply_btn is None:
+            return
+
+        self.apply_btn.setEnabled(self._has_enabled_preview_changes())
+
+    def _has_enabled_preview_changes(self) -> bool:
+        """Проверить, есть ли включённые изменения preview.
+
+        Returns:
+            True, если есть хотя бы одно включённое изменение.
+        """
+        if self._current_preview is None:
+            return False
+
+        return any(
+            change.enabled
+            for preview_file in self._current_preview.files
+            for change in preview_file.changes
+        )
 
     def _render_variants(self, variants: list[TermVariant]) -> None:
         """Отрисовать найденные формы в таблице.
@@ -555,14 +692,44 @@ class TermReplacePage(QtWidgets.QWidget):
 
     def _reset_preview_state(self) -> None:
         """Сбросить preview-состояние после загрузки карты."""
+        self._current_preview = None
+        self._preview_cards = []
+
         if self.apply_btn is not None:
             self.apply_btn.setEnabled(False)
 
-        if self.preview_placeholder_label is not None:
-            self.preview_placeholder_label.setText("Preview пока не построен")
+        self._show_preview_placeholder("Preview пока не построен")
 
         if self.variants_table is None:
             return
 
         for row in range(self.variants_table.rowCount()):
             self._set_readonly_item(row, 5, "—")
+
+    def _clear_preview_layout(self) -> None:
+        """Удалить все виджеты из preview-зоны."""
+        if self.preview_layout is None:
+            return
+
+        while self.preview_layout.count():
+            item = self.preview_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+
+    def _show_preview_placeholder(self, text: str) -> None:
+        """Показать placeholder в preview-зоне.
+
+        Args:
+            text: Текст placeholder.
+        """
+        if self.preview_layout is None:
+            return
+
+        self._clear_preview_layout()
+
+        self.preview_placeholder_label = QtWidgets.QLabel(text)
+        self.preview_placeholder_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.preview_layout.addWidget(self.preview_placeholder_label)
+        self.preview_layout.addStretch(1)
