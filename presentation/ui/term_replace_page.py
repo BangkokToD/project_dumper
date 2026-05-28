@@ -14,12 +14,18 @@ from domain.term_replace.maps import (
     replacement_map_to_json,
 )
 from domain.term_replace.models import (
+    ReplacementApplyReport,
     ReplacementPreview,
     ReplacementRule,
     TermVariant,
 )
 from presentation.ui.term_replace_preview import TermReplacePreviewChangeCard
 from services.term_replace_service import TermReplaceService
+
+_GIT_APPLY_WARNING = (
+    "Перед массовой заменой убедитесь, что важные изменения закоммичены.\n"
+    "Project Dumper не создаёт backup."
+)
 
 class TermReplacePage(QtWidgets.QWidget):
     """UI skeleton вкладки «Замена».
@@ -214,6 +220,8 @@ class TermReplacePage(QtWidgets.QWidget):
             self.project_path_edit.textChanged.connect(
                 self._invalidate_preview_due_to_input_change
             )
+        if self.apply_btn is not None:
+            self.apply_btn.clicked.connect(self.apply_selected_replacements)
         if self.source_term_edit is not None:
             self.source_term_edit.textChanged.connect(
                 self._invalidate_preview_due_to_input_change
@@ -457,6 +465,85 @@ class TermReplacePage(QtWidgets.QWidget):
             for preview_file in self._current_preview.files
             for change in preview_file.changes
         )
+
+    def apply_selected_replacements(self) -> None:
+        """Применить отмеченные изменения текущего preview."""
+        if self._current_preview is None:
+            return
+
+        root = self._validated_root()
+        if root is None:
+            return
+
+        if not self._confirm_apply(root):
+            return
+
+        report = TermReplaceService.apply_preview(root, self._current_preview)
+        QtWidgets.QMessageBox.information(
+            self,
+            "Отчёт применения",
+            self._format_apply_report(report),
+        )
+        self._reset_preview_state()
+
+    def _confirm_apply(self, root: Path) -> bool:
+        """Запросить подтверждение применения замен.
+
+        Args:
+            root: Корневая директория проекта.
+
+        Returns:
+            True, если пользователь подтвердил применение.
+        """
+        if TermReplaceService.has_git_repository(root):
+            result = QtWidgets.QMessageBox.warning(
+                self,
+                "Подтвердить применение",
+                _GIT_APPLY_WARNING,
+                QtWidgets.QMessageBox.StandardButton.Ok
+                | QtWidgets.QMessageBox.StandardButton.Cancel,
+                QtWidgets.QMessageBox.StandardButton.Cancel,
+            )
+            return result == QtWidgets.QMessageBox.StandardButton.Ok
+
+        result = QtWidgets.QMessageBox.question(
+            self,
+            "Подтвердить применение",
+            "Применить отмеченные изменения?",
+            QtWidgets.QMessageBox.StandardButton.Ok
+            | QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Cancel,
+        )
+        return result == QtWidgets.QMessageBox.StandardButton.Ok
+
+    def _format_apply_report(self, report: ReplacementApplyReport) -> str:
+        """Сформировать текст отчёта применения замен.
+
+        Args:
+            report: Отчёт сервиса применения замен.
+
+        Returns:
+            Текст для QMessageBox.
+        """
+        lines = [
+            f"Изменено файлов: {report.changed_files}",
+            f"Применено замен: {report.applied_changes}",
+            f"Пропущено замен: {report.skipped_changes}",
+            f"Конфликты: {len(report.conflicted_files)}",
+        ]
+
+        if report.conflicted_files:
+            lines.extend(
+                [
+                    "",
+                    "Файлы изменились после preview:",
+                    *[f"- {file_path}" for file_path in report.conflicted_files],
+                    "",
+                    "Постройте preview заново.",
+                ]
+            )
+
+        return "\n".join(lines)
 
     def _on_variants_table_item_changed(
         self,

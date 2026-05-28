@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from PyQt6 import QtWidgets
@@ -11,8 +13,9 @@ from domain.term_replace.maps import (
 )
 from domain.term_replace.models import TermOccurrence, TermVariant
 from domain.term_replace.models import ReplacementRule
-from presentation.ui.term_replace_page import TermReplacePage
+from presentation.ui.term_replace_page import TermReplacePage, _GIT_APPLY_WARNING
 from domain.term_replace.models import (
+    ReplacementApplyReport,
     ReplacementPreview,
     ReplacementPreviewChange,
     ReplacementPreviewFile,
@@ -1077,3 +1080,218 @@ def test_term_replace_page_apply_disabled_after_rules_become_stale(
     page.variants_table.item(0, 4).setText("Директор")
 
     assert page.apply_btn.isEnabled() is False
+
+
+def test_term_replace_page_apply_calls_service_and_shows_report(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Применяет текущий preview через сервис и показывает отчёт."""
+    page = _build_page_with_preview(tmp_path, monkeypatch)
+    assert page.project_path_edit is not None
+    preview = page._current_preview
+    assert preview is not None
+
+    captured: dict[str, object] = {}
+    messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.has_git_repository",
+        lambda _root: False,
+    )
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QtWidgets.QMessageBox.StandardButton.Ok,
+    )
+
+    def fake_apply(root, service_preview):
+        captured["root"] = root
+        captured["preview"] = service_preview
+        return ReplacementApplyReport(
+            changed_files=1,
+            applied_changes=1,
+            skipped_changes=0,
+            conflicted_files=[],
+        )
+
+    def fake_information(_parent, title, text):
+        messages.append((title, text))
+
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.apply_preview",
+        fake_apply,
+    )
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", fake_information)
+
+    page.apply_selected_replacements()
+
+    assert captured["root"] == Path(page.project_path_edit.text())
+    assert captured["preview"] is preview
+    assert messages == [
+        (
+            "Отчёт применения",
+            "Изменено файлов: 1\n"
+            "Применено замен: 1\n"
+            "Пропущено замен: 0\n"
+            "Конфликты: 0",
+        )
+    ]
+    _assert_preview_reset(page)
+
+
+def test_term_replace_page_apply_shows_git_warning_before_apply(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Показывает предупреждение при наличии .git перед применением."""
+    page = _build_page_with_preview(tmp_path, monkeypatch)
+    assert page.project_path_edit is not None
+    warnings: list[tuple[str, str]] = []
+    apply_called = {"value": False}
+
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.has_git_repository",
+        lambda _root: True,
+    )
+
+    def fake_warning(_parent, title, text, *_args, **_kwargs):
+        warnings.append((title, text))
+        return QtWidgets.QMessageBox.StandardButton.Ok
+
+    def fake_apply(*_args, **_kwargs):
+        apply_called["value"] = True
+        return ReplacementApplyReport(
+            changed_files=0,
+            applied_changes=0,
+            skipped_changes=0,
+            conflicted_files=[],
+        )
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", fake_warning)
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "information",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.apply_preview",
+        fake_apply,
+    )
+
+    page.apply_selected_replacements()
+
+    assert warnings == [("Подтвердить применение", _GIT_APPLY_WARNING)]
+    assert apply_called["value"] is True
+
+
+def test_term_replace_page_apply_cancel_does_not_call_service(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Отмена подтверждения не вызывает применение."""
+    page = _build_page_with_preview(tmp_path, monkeypatch)
+    apply_called = {"value": False}
+
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.has_git_repository",
+        lambda _root: False,
+    )
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QtWidgets.QMessageBox.StandardButton.Cancel,
+    )
+
+    def fake_apply(*_args, **_kwargs):
+        apply_called["value"] = True
+        return ReplacementApplyReport(
+            changed_files=1,
+            applied_changes=1,
+            skipped_changes=0,
+            conflicted_files=[],
+        )
+
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.apply_preview",
+        fake_apply,
+    )
+
+    page.apply_selected_replacements()
+
+    assert apply_called["value"] is False
+    assert page._current_preview is not None
+    assert page.apply_btn is not None
+    assert page.apply_btn.isEnabled() is True
+
+
+def test_term_replace_page_apply_report_includes_conflicted_files(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Отчёт показывает список конфликтных файлов."""
+    page = _build_page_with_preview(tmp_path, monkeypatch)
+    messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.has_git_repository",
+        lambda _root: False,
+    )
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QtWidgets.QMessageBox.StandardButton.Ok,
+    )
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.apply_preview",
+        lambda *_args, **_kwargs: ReplacementApplyReport(
+            changed_files=1,
+            applied_changes=2,
+            skipped_changes=3,
+            conflicted_files=["a.py", "docs/b.py"],
+        ),
+    )
+
+    def fake_information(_parent, title, text):
+        messages.append((title, text))
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", fake_information)
+
+    page.apply_selected_replacements()
+
+    assert len(messages) == 1
+    title, text = messages[0]
+    assert title == "Отчёт применения"
+    assert "Изменено файлов: 1" in text
+    assert "Применено замен: 2" in text
+    assert "Пропущено замен: 3" in text
+    assert "Конфликты: 2" in text
+    assert "Файлы изменились после preview:" in text
+    assert "- a.py" in text
+    assert "- docs/b.py" in text
+    assert "Постройте preview заново." in text
+
+
+def test_term_replace_page_apply_direct_call_without_preview_does_nothing(
+    qapp,
+    monkeypatch,
+) -> None:
+    """Прямой вызов apply без preview ничего не применяет."""
+    apply_called = {"value": False}
+
+    def fake_apply(*_args, **_kwargs):
+        apply_called["value"] = True
+
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.apply_preview",
+        fake_apply,
+    )
+
+    page = TermReplacePage()
+    page.apply_selected_replacements()
+
+    assert apply_called["value"] is False
