@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from PyQt6 import QtCore, QtWidgets
@@ -53,6 +55,7 @@ class TermReplacePage(QtWidgets.QWidget):
         self._loaded_replacement_map: ReplacementMap | None = None
         self._current_preview: ReplacementPreview | None = None
         self._preview_cards: list[TermReplacePreviewChangeCard] = []
+        self._suppress_preview_invalidation: bool = False
 
         self.project_path_edit: QtWidgets.QLineEdit | None = None
         self.source_term_edit: QtWidgets.QLineEdit | None = None
@@ -205,6 +208,43 @@ class TermReplacePage(QtWidgets.QWidget):
             self.load_map_btn.clicked.connect(self.load_replacement_map)
         if self.preview_btn is not None:
             self.preview_btn.clicked.connect(self.build_preview)
+        if self.clear_btn is not None:
+            self.clear_btn.clicked.connect(self.clear_replacement_state)
+        if self.project_path_edit is not None:
+            self.project_path_edit.textChanged.connect(
+                self._invalidate_preview_due_to_input_change
+            )
+        if self.source_term_edit is not None:
+            self.source_term_edit.textChanged.connect(
+                self._invalidate_preview_due_to_input_change
+            )
+        if self.variants_table is not None:
+            self.variants_table.itemChanged.connect(self._on_variants_table_item_changed)
+
+    @contextmanager
+    def _preview_invalidation_suppressed(self) -> Iterator[None]:
+        """Временно отключить автоматический сброс preview.
+
+        Используется при программной перерисовке таблицы, чтобы внутренние
+        изменения ячеек и checkbox не считались пользовательским устареванием
+        preview.
+
+        Yields:
+            Контекст с отключённой invalidation preview.
+        """
+        previous = self._suppress_preview_invalidation
+        self._suppress_preview_invalidation = True
+        try:
+            yield
+        finally:
+            self._suppress_preview_invalidation = previous
+
+    def _invalidate_preview_due_to_input_change(self, *_args: object) -> None:
+        """Сбросить preview из-за пользовательского изменения входных данных."""
+        if self._suppress_preview_invalidation:
+            return
+
+        self._reset_preview_state()
 
     def scan_variants(self) -> None:
         """Просканировать проект и заполнить таблицу найденных форм."""
@@ -235,6 +275,7 @@ class TermReplacePage(QtWidgets.QWidget):
         )
         self._render_variants(variants)
         self._apply_loaded_replacement_map()
+        self._reset_preview_state()
 
         if not variants:
             QtWidgets.QMessageBox.information(
@@ -417,6 +458,20 @@ class TermReplacePage(QtWidgets.QWidget):
             for change in preview_file.changes
         )
 
+    def _on_variants_table_item_changed(
+        self,
+        item: QtWidgets.QTableWidgetItem,
+    ) -> None:
+        """Сбросить preview при изменении replacement в таблице форм.
+
+        Args:
+            item: Изменённая ячейка таблицы.
+        """
+        if self._suppress_preview_invalidation:
+            return
+        if item.column() == 4:
+            self._reset_preview_state()
+
     def _render_variants(self, variants: list[TermVariant]) -> None:
         """Отрисовать найденные формы в таблице.
 
@@ -426,17 +481,18 @@ class TermReplacePage(QtWidgets.QWidget):
         if self.variants_table is None:
             return
 
-        self.variants_table.setRowCount(0)
+        with self._preview_invalidation_suppressed():
+            self.variants_table.setRowCount(0)
 
-        for variant in variants:
-            row = self.variants_table.rowCount()
-            self.variants_table.insertRow(row)
-            self._set_enabled_checkbox(row, checked=True)
-            self._set_readonly_item(row, 1, variant.text)
-            self._set_readonly_item(row, 2, str(variant.count))
-            self._set_readonly_item(row, 3, str(variant.file_count))
-            self._set_editable_item(row, 4, "")
-            self._set_readonly_item(row, 5, "—")
+            for variant in variants:
+                row = self.variants_table.rowCount()
+                self.variants_table.insertRow(row)
+                self._set_enabled_checkbox(row, checked=True)
+                self._set_readonly_item(row, 1, variant.text)
+                self._set_readonly_item(row, 2, str(variant.count))
+                self._set_readonly_item(row, 3, str(variant.file_count))
+                self._set_editable_item(row, 4, "")
+                self._set_readonly_item(row, 5, "—")
 
     def _set_enabled_checkbox(self, row: int, *, checked: bool) -> None:
         """Добавить checkbox включения формы в строку таблицы.
@@ -450,6 +506,7 @@ class TermReplacePage(QtWidgets.QWidget):
 
         checkbox = QtWidgets.QCheckBox()
         checkbox.setChecked(checked)
+        checkbox.toggled.connect(self._invalidate_preview_due_to_input_change)
 
         holder = QtWidgets.QWidget(self.variants_table)
         layout = QtWidgets.QHBoxLayout(holder)
@@ -543,6 +600,16 @@ class TermReplacePage(QtWidgets.QWidget):
                 f"Не удалось сохранить карту: {exc}",
             )
 
+    def clear_replacement_state(self) -> None:
+        """Очистить таблицу форм и preview-состояние вкладки."""
+        self._loaded_replacement_map = None
+
+        if self.variants_table is not None:
+            with self._preview_invalidation_suppressed():
+                self.variants_table.setRowCount(0)
+
+        self._reset_preview_state()
+
     def load_replacement_map(self) -> None:
         """Загрузить JSON-карту замен и применить её к таблице."""
         if self.source_term_edit is None:
@@ -618,14 +685,15 @@ class TermReplacePage(QtWidgets.QWidget):
             for rule in self._loaded_replacement_map.rules
         }
 
-        for row in range(self.variants_table.rowCount()):
-            source = self._table_item_text(row, 1)
-            rule = rules_by_source.get(source)
-            if rule is None:
-                continue
+        with self._preview_invalidation_suppressed():
+            for row in range(self.variants_table.rowCount()):
+                source = self._table_item_text(row, 1)
+                rule = rules_by_source.get(source)
+                if rule is None:
+                    continue
 
-            self._set_row_enabled(row, checked=rule.enabled)
-            self._set_editable_item(row, 4, rule.replacement)
+                self._set_row_enabled(row, checked=rule.enabled)
+                self._set_editable_item(row, 4, rule.replacement)
 
     def _table_item_text(self, row: int, column: int) -> str:
         """Получить текст ячейки таблицы.
@@ -703,8 +771,9 @@ class TermReplacePage(QtWidgets.QWidget):
         if self.variants_table is None:
             return
 
-        for row in range(self.variants_table.rowCount()):
-            self._set_readonly_item(row, 5, "—")
+        with self._preview_invalidation_suppressed():
+            for row in range(self.variants_table.rowCount()):
+                self._set_readonly_item(row, 5, "—")
 
     def _clear_preview_layout(self) -> None:
         """Удалить все виджеты из preview-зоны."""

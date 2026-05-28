@@ -140,6 +140,76 @@ def _preview_with_files(
     )
 
 
+def _build_page_with_preview(tmp_path, monkeypatch) -> TermReplacePage:
+    """Создать страницу с уже построенным preview.
+
+    Args:
+        tmp_path: Временная директория pytest.
+        monkeypatch: Фикстура monkeypatch.
+
+    Returns:
+        Страница вкладки с активным preview.
+    """
+    root = tmp_path / "proj"
+    root.mkdir(exist_ok=True)
+    preview = _preview_with_files(
+        [
+            (
+                "README.md",
+                [
+                    _preview_change(
+                        change_id="1",
+                        file_path="README.md",
+                        line_number=1,
+                        source="Супервайзер",
+                        replacement="Руководитель",
+                        line_before="Супервайзер проверил задачу",
+                        line_after="Руководитель проверил задачу",
+                        column_start=0,
+                    )
+                ],
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.build_preview",
+        lambda *_args, **_kwargs: preview,
+    )
+
+    page = TermReplacePage()
+    assert page.project_path_edit is not None
+    assert page.source_term_edit is not None
+    assert page.variants_table is not None
+    assert page.apply_btn is not None
+
+    page.project_path_edit.setText(str(root))
+    page.source_term_edit.setText("супервайзер")
+    page._render_variants([_variant("Супервайзер")])
+    page.variants_table.item(0, 4).setText("Руководитель")
+    page.build_preview()
+
+    assert page.apply_btn.isEnabled() is True
+    assert page._current_preview is not None
+    return page
+
+
+def _assert_preview_reset(page: TermReplacePage) -> None:
+    """Проверить, что preview-состояние сброшено.
+
+    Args:
+        page: Страница вкладки «Замена».
+    """
+    assert page._current_preview is None
+    assert page._preview_cards == []
+    assert page.apply_btn is not None
+    assert page.apply_btn.isEnabled() is False
+    assert page.preview_placeholder_label is not None
+    assert page.preview_placeholder_label.text() == "Preview пока не построен"
+
+    if page.variants_table is not None and page.variants_table.rowCount() > 0:
+        assert page.variants_table.item(0, 5).text() == "—"
+
+
 def test_term_replace_page_creates_required_controls(qapp) -> None:
     """Создаёт обязательные элементы skeleton вкладки."""
     page = TermReplacePage()
@@ -895,3 +965,115 @@ def test_term_replace_page_build_preview_without_rules_shows_warning(
 
     assert build_called["value"] is False
     assert messages == [("Нет замен", "Включи хотя бы одну форму и укажи замену.")]
+
+
+def test_term_replace_page_replacement_edit_resets_preview(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Изменение replacement сбрасывает preview."""
+    page = _build_page_with_preview(tmp_path, monkeypatch)
+    assert page.variants_table is not None
+
+    page.variants_table.item(0, 4).setText("Директор")
+
+    _assert_preview_reset(page)
+
+
+def test_term_replace_page_variant_checkbox_resets_preview(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Изменение checkbox формы сбрасывает preview."""
+    page = _build_page_with_preview(tmp_path, monkeypatch)
+    assert page.variants_table is not None
+
+    _checkbox_at(page.variants_table, 0).setChecked(False)
+
+    _assert_preview_reset(page)
+
+
+def test_term_replace_page_project_path_change_resets_preview(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Изменение поля проекта сбрасывает preview."""
+    page = _build_page_with_preview(tmp_path, monkeypatch)
+    assert page.project_path_edit is not None
+
+    page.project_path_edit.setText(str(tmp_path / "another-project"))
+
+    _assert_preview_reset(page)
+
+
+def test_term_replace_page_source_term_change_resets_preview(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Изменение поля термина сбрасывает preview."""
+    page = _build_page_with_preview(tmp_path, monkeypatch)
+    assert page.source_term_edit is not None
+
+    page.source_term_edit.setText("менеджер")
+
+    _assert_preview_reset(page)
+
+
+def test_term_replace_page_rescan_resets_preview(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Повторное сканирование сбрасывает preview."""
+    page = _build_page_with_preview(tmp_path, monkeypatch)
+    assert page.project_path_edit is not None
+    assert page.source_term_edit is not None
+
+    monkeypatch.setattr(
+        "presentation.ui.term_replace_page.TermReplaceService.scan",
+        lambda *_args, **_kwargs: [_variant("Супервайзер")],
+    )
+
+    page.scan_variants()
+
+    _assert_preview_reset(page)
+
+
+def test_term_replace_page_clear_resets_preview_and_table(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Очистка сбрасывает preview и очищает таблицу форм."""
+    page = _build_page_with_preview(tmp_path, monkeypatch)
+    assert page.variants_table is not None
+
+    page.clear_replacement_state()
+
+    assert page.variants_table.rowCount() == 0
+    assert page._current_preview is None
+    assert page._preview_cards == []
+    assert page.apply_btn is not None
+    assert page.apply_btn.isEnabled() is False
+    assert page.preview_placeholder_label is not None
+    assert page.preview_placeholder_label.text() == "Preview пока не построен"
+
+
+def test_term_replace_page_apply_disabled_after_rules_become_stale(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Apply нельзя нажать после устаревания preview."""
+    page = _build_page_with_preview(tmp_path, monkeypatch)
+    assert page.apply_btn is not None
+    assert page.apply_btn.isEnabled() is True
+    assert page.variants_table is not None
+
+    page.variants_table.item(0, 4).setText("Директор")
+
+    assert page.apply_btn.isEnabled() is False
