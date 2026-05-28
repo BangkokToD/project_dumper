@@ -7,6 +7,7 @@ import pytest
 
 from config.model import Config
 from domain.models import ScanOptions
+from domain.term_replace.models import ReplacementPreview, ReplacementRule
 from services.scan_service import ScanService
 from services.term_replace_service import TermReplaceService
 
@@ -27,6 +28,16 @@ def _variants_by_text(root: Path, *, cfg: Config | None = None) -> dict[str, obj
         cfg or Config(),
     )
     return {variant.text: variant for variant in variants}
+
+
+def _preview_file_by_path(preview: ReplacementPreview, file_path: str):
+    """Найти preview-файл по относительному пути.
+
+    Args:
+        preview: Preview изменений.
+        file_path: Относительный POSIX-путь файла.
+    """
+    return next(item for item in preview.files if item.file_path == file_path)
 
 
 def test_term_replace_service_scans_real_tmp_project() -> None:
@@ -207,3 +218,150 @@ def test_term_replace_service_does_not_break_existing_scan_service(tmp_path: Pat
     assert result.tree is not None
     assert [item.path for item in result.files] == ["README.md"]
     assert result.files[0].content == "Супервайзер\n"
+
+
+def test_term_replace_service_build_preview_reads_real_files(tmp_path: Path) -> None:
+    """Строит preview по реальным файлам проекта."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "README.md").write_text("Супервайзер проверил задачу\n", encoding="utf-8")
+    (root / "notes.txt").write_text("Термина здесь нет\n", encoding="utf-8")
+
+    preview = TermReplaceService.build_preview(
+        root,
+        [
+            ReplacementRule(
+                source="Супервайзер",
+                replacement="Руководитель",
+            )
+        ],
+        Config(),
+    )
+
+    assert [item.file_path for item in preview.files] == ["README.md"]
+    assert len(preview.files[0].changes) == 1
+    assert preview.files[0].changes[0].line_before == "Супервайзер проверил задачу"
+    assert preview.files[0].changes[0].line_after == "Руководитель проверил задачу"
+
+
+def test_term_replace_service_apply_preview_changes_real_files(tmp_path: Path) -> None:
+    """Применяет отмеченные изменения к реальным файлам."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    target = root / "README.md"
+    target.write_text(
+        "Супервайзер проверил задачу\n"
+        "супервайзеру отправили отчёт\n",
+        encoding="utf-8",
+    )
+
+    preview = TermReplaceService.build_preview(
+        root,
+        [
+            ReplacementRule(source="Супервайзер", replacement="Руководитель"),
+            ReplacementRule(source="супервайзеру", replacement="руководителю"),
+        ],
+        Config(),
+    )
+
+    report = TermReplaceService.apply_preview(root, preview)
+
+    assert target.read_text(encoding="utf-8") == (
+        "Руководитель проверил задачу\n"
+        "руководителю отправили отчёт\n"
+    )
+    assert report.changed_files == 1
+    assert report.applied_changes == 2
+    assert report.skipped_changes == 0
+    assert report.conflicted_files == []
+
+
+def test_term_replace_service_apply_preview_skips_unchecked_changes(tmp_path: Path) -> None:
+    """Не применяет снятые изменения и считает их пропущенными."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    target = root / "README.md"
+    target.write_text("Супервайзер и супервайзер\n", encoding="utf-8")
+
+    preview = TermReplaceService.build_preview(
+        root,
+        [
+            ReplacementRule(source="Супервайзер", replacement="Руководитель"),
+            ReplacementRule(source="супервайзер", replacement="руководитель"),
+        ],
+        Config(),
+    )
+    preview_file = _preview_file_by_path(preview, "README.md")
+    preview_file.changes[1].enabled = False
+
+    report = TermReplaceService.apply_preview(root, preview)
+
+    assert target.read_text(encoding="utf-8") == "Руководитель и супервайзер\n"
+    assert report.changed_files == 1
+    assert report.applied_changes == 1
+    assert report.skipped_changes == 1
+    assert report.conflicted_files == []
+
+
+def test_term_replace_service_apply_preview_does_not_write_when_all_changes_disabled(
+    tmp_path: Path,
+) -> None:
+    """Не записывает файл, если все изменения файла выключены."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    target = root / "README.md"
+    target.write_text("Супервайзер и супервайзер\n", encoding="utf-8")
+
+    preview = TermReplaceService.build_preview(
+        root,
+        [
+            ReplacementRule(source="Супервайзер", replacement="Руководитель"),
+            ReplacementRule(source="супервайзер", replacement="руководитель"),
+        ],
+        Config(),
+    )
+    preview_file = _preview_file_by_path(preview, "README.md")
+    for change in preview_file.changes:
+        change.enabled = False
+
+    report = TermReplaceService.apply_preview(root, preview)
+
+    assert target.read_text(encoding="utf-8") == "Супервайзер и супервайзер\n"
+    assert report.changed_files == 0
+    assert report.applied_changes == 0
+    assert report.skipped_changes == 2
+    assert report.conflicted_files == []
+
+
+def test_term_replace_service_apply_preview_blocks_hash_conflict_and_continues(
+    tmp_path: Path,
+) -> None:
+    """Блокирует конфликтный файл, но применяет остальные файлы."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    first = root / "a.txt"
+    second = root / "b.txt"
+    first.write_text("Супервайзер и супервайзер\n", encoding="utf-8")
+    second.write_text("Супервайзер и супервайзер\n", encoding="utf-8")
+
+    preview = TermReplaceService.build_preview(
+        root,
+        [
+            ReplacementRule(source="Супервайзер", replacement="Руководитель"),
+            ReplacementRule(source="супервайзер", replacement="руководитель"),
+        ],
+        Config(),
+    )
+    second_preview = _preview_file_by_path(preview, "b.txt")
+    second_preview.changes[1].enabled = False
+
+    first.write_text("Супервайзер и супервайзер изменён\n", encoding="utf-8")
+
+    report = TermReplaceService.apply_preview(root, preview)
+
+    assert first.read_text(encoding="utf-8") == "Супервайзер и супервайзер изменён\n"
+    assert second.read_text(encoding="utf-8") == "Руководитель и супервайзер\n"
+    assert report.changed_files == 1
+    assert report.applied_changes == 1
+    assert report.skipped_changes == 3
+    assert report.conflicted_files == ["a.txt"]
