@@ -57,6 +57,22 @@ def _checkbox_at(table: QtWidgets.QTableWidget, row: int) -> QtWidgets.QCheckBox
     return checkbox
 
 
+def _row_by_source(table: QtWidgets.QTableWidget, source: str) -> int:
+    """Найти строку таблицы по точной форме.
+
+    Args:
+        table: Таблица форм.
+        source: Точная найденная форма.
+
+    Returns:
+        Индекс строки.
+    """
+    for row in range(table.rowCount()):
+        if table.item(row, 1).text() == source:
+            return row
+    raise AssertionError(f"Source row not found: {source}")
+
+
 def _variant(text: str, *, count: int = 1, file_count: int = 1) -> TermVariant:
     """Создать тестовый TermVariant.
 
@@ -1295,3 +1311,72 @@ def test_term_replace_page_apply_direct_call_without_preview_does_nothing(
     page.apply_selected_replacements()
 
     assert apply_called["value"] is False
+
+
+def test_term_replace_page_end_to_end_replacement_workflow(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Покрывает базовый GUI workflow вкладки «Замена» на tmp-проекте."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    target = root / "README.md"
+    target.write_text("Супервайзер и супервайзер\n", encoding="utf-8")
+
+    messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QtWidgets.QMessageBox.StandardButton.Ok,
+    )
+
+    def fake_information(_parent, title, text):
+        messages.append((title, text))
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", fake_information)
+
+    page = TermReplacePage()
+    assert page.project_path_edit is not None
+    assert page.source_term_edit is not None
+    assert page.variants_table is not None
+    assert page.apply_btn is not None
+
+    page.project_path_edit.setText(str(root))
+    page.source_term_edit.setText("супервайзер")
+    page.scan_variants()
+
+    table = page.variants_table
+    assert table.rowCount() == 2
+
+    upper_row = _row_by_source(table, "Супервайзер")
+    lower_row = _row_by_source(table, "супервайзер")
+
+    table.item(upper_row, 4).setText("Руководитель")
+    table.item(lower_row, 4).setText("руководитель")
+
+    page.build_preview()
+
+    cards = page.findChildren(TermReplacePreviewChangeCard)
+    assert len(cards) == 2
+
+    lower_card = next(card for card in cards if card.change.source == "супервайзер")
+    assert lower_card.checkbox is not None
+    lower_card.checkbox.setChecked(False)
+
+    assert page.apply_btn.isEnabled() is True
+
+    page.apply_selected_replacements()
+
+    assert target.read_text(encoding="utf-8") == "Руководитель и супервайзер\n"
+    assert messages == [
+        (
+            "Отчёт применения",
+            "Изменено файлов: 1\n"
+            "Применено замен: 1\n"
+            "Пропущено замен: 1\n"
+            "Конфликты: 0",
+        )
+    ]
+    _assert_preview_reset(page)

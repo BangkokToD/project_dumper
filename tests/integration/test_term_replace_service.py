@@ -367,6 +367,61 @@ def test_term_replace_service_apply_preview_blocks_hash_conflict_and_continues(
     assert report.conflicted_files == ["a.txt"]
 
 
+def test_term_replace_service_end_to_end_replacement_workflow(
+    tmp_path: Path,
+) -> None:
+    """Покрывает полный сервисный workflow замены с hash conflict."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    first = root / "a.txt"
+    second = root / "b.txt"
+    conflicted = root / "conflict.txt"
+
+    first.write_text("Супервайзер и супервайзер\n", encoding="utf-8")
+    second.write_text("Супервайзера добавили в отчёт\n", encoding="utf-8")
+    conflicted.write_text("Супервайзер конфликт\n", encoding="utf-8")
+
+    variants = _variants_by_text(root)
+
+    assert set(variants) == {"Супервайзер", "супервайзер", "Супервайзера"}
+    assert variants["Супервайзер"].count == 2
+    assert variants["супервайзер"].count == 1
+    assert variants["Супервайзера"].count == 1
+
+    preview = TermReplaceService.build_preview(
+        root,
+        [
+            ReplacementRule(source="Супервайзер", replacement="Руководитель"),
+            ReplacementRule(source="супервайзер", replacement="руководитель"),
+            ReplacementRule(source="Супервайзера", replacement="Руководителя"),
+        ],
+        Config(),
+    )
+
+    first_preview = _preview_file_by_path(preview, "a.txt")
+    disabled_change = next(
+        change
+        for change in first_preview.changes
+        if change.source == "супервайзер"
+    )
+    disabled_change.enabled = False
+
+    conflicted.write_text("Супервайзер конфликт изменён\n", encoding="utf-8")
+
+    report = TermReplaceService.apply_preview(root, preview)
+
+    assert first.read_text(encoding="utf-8") == "Руководитель и супервайзер\n"
+    assert second.read_text(encoding="utf-8") == "Руководителя добавили в отчёт\n"
+    assert conflicted.read_text(encoding="utf-8") == (
+        "Супервайзер конфликт изменён\n"
+    )
+
+    assert report.changed_files == 2
+    assert report.applied_changes == 2
+    assert report.skipped_changes == 2
+    assert report.conflicted_files == ["conflict.txt"]
+
+
 def test_term_replace_service_has_git_repository_returns_true_for_git_dir(
     tmp_path: Path,
 ) -> None:
