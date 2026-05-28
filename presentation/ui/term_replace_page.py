@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt6 import QtCore, QtWidgets
 
+from config.model import Config
+from domain.term_replace.models import TermVariant
+from services.term_replace_service import TermReplaceService
 
 class TermReplacePage(QtWidgets.QWidget):
     """UI skeleton вкладки «Замена».
@@ -20,13 +25,20 @@ class TermReplacePage(QtWidgets.QWidget):
         "К применению",
     )
 
-    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QtWidgets.QWidget | None = None,
+        cfg: Config | None = None,
+    ) -> None:
         """Инициализировать вкладку «Замена».
 
         Args:
             parent: Родительский QWidget.
+            cfg: Конфигурация Project Dumper. Если не передана, используется
+                конфигурация родительского MainWindow или дефолтный Config.
         """
         super().__init__(parent)
+        self._cfg = cfg
 
         self.project_path_edit: QtWidgets.QLineEdit | None = None
         self.source_term_edit: QtWidgets.QLineEdit | None = None
@@ -43,6 +55,7 @@ class TermReplacePage(QtWidgets.QWidget):
         self.clear_btn: QtWidgets.QPushButton | None = None
 
         self._build_ui()
+        self._connect_signals()
 
     def _build_ui(self) -> None:
         """Собрать skeleton интерфейса вкладки."""
@@ -167,3 +180,169 @@ class TermReplacePage(QtWidgets.QWidget):
         bottom_bar.addWidget(self.clear_btn)
 
         return bottom_bar
+
+    def _connect_signals(self) -> None:
+        """Подключить сигналы вкладки."""
+        if self.scan_btn is not None:
+            self.scan_btn.clicked.connect(self.scan_variants)
+
+    def scan_variants(self) -> None:
+        """Просканировать проект и заполнить таблицу найденных форм."""
+        if (
+            self.project_path_edit is None
+            or self.source_term_edit is None
+            or self.variants_table is None
+        ):
+            return
+
+        root = self._validated_root()
+        if root is None:
+            return
+
+        source_term = self.source_term_edit.text().strip()
+        if not source_term:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Нет термина",
+                "Укажи термин для поиска.",
+            )
+            return
+
+        variants = TermReplaceService.scan(
+            root,
+            source_term,
+            self._current_config(),
+        )
+        self._render_variants(variants)
+
+        if not variants:
+            QtWidgets.QMessageBox.information(
+                self,
+                "Ничего не найдено",
+                "Формы термина не найдены.",
+            )
+
+    def _validated_root(self) -> Path | None:
+        """Проверить путь проекта из поля ввода.
+
+        Returns:
+            Path корня проекта или ``None``, если путь невалиден.
+        """
+        if self.project_path_edit is None:
+            return None
+
+        raw_path = self.project_path_edit.text().strip()
+        if not raw_path:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Нет директории",
+                "Сначала укажи путь к проекту.",
+            )
+            return None
+
+        root = Path(raw_path)
+        if not root.exists() or not root.is_dir():
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Ошибка",
+                "Путь не существует или это не директория.",
+            )
+            return None
+
+        return root
+
+    def _current_config(self) -> Config:
+        """Получить актуальную конфигурацию для сканирования.
+
+        Returns:
+            Конфигурация, переданная во вкладку, конфигурация родительского окна
+            или дефолтный Config.
+        """
+        if self._cfg is not None:
+            return self._cfg
+
+        parent = self.parent()
+        parent_cfg = getattr(getattr(parent, "w", None), "cfg", None)
+        if isinstance(parent_cfg, Config):
+            return parent_cfg
+
+        return Config()
+
+    def _render_variants(self, variants: list[TermVariant]) -> None:
+        """Отрисовать найденные формы в таблице.
+
+        Args:
+            variants: Список найденных форм термина.
+        """
+        if self.variants_table is None:
+            return
+
+        self.variants_table.setRowCount(0)
+
+        for variant in variants:
+            row = self.variants_table.rowCount()
+            self.variants_table.insertRow(row)
+            self._set_enabled_checkbox(row, checked=True)
+            self._set_readonly_item(row, 1, variant.text)
+            self._set_readonly_item(row, 2, str(variant.count))
+            self._set_readonly_item(row, 3, str(variant.file_count))
+            self._set_editable_item(row, 4, "")
+            self._set_readonly_item(row, 5, "—")
+
+    def _set_enabled_checkbox(self, row: int, *, checked: bool) -> None:
+        """Добавить checkbox включения формы в строку таблицы.
+
+        Args:
+            row: Индекс строки.
+            checked: Начальное состояние checkbox.
+        """
+        if self.variants_table is None:
+            return
+
+        checkbox = QtWidgets.QCheckBox()
+        checkbox.setChecked(checked)
+
+        holder = QtWidgets.QWidget(self.variants_table)
+        layout = QtWidgets.QHBoxLayout(holder)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(checkbox)
+
+        self.variants_table.setCellWidget(row, 0, holder)
+
+    def _set_readonly_item(self, row: int, column: int, text: str) -> None:
+        """Установить read-only ячейку таблицы.
+
+        Args:
+            row: Индекс строки.
+            column: Индекс колонки.
+            text: Текст ячейки.
+        """
+        if self.variants_table is None:
+            return
+
+        item = QtWidgets.QTableWidgetItem(text)
+        item.setFlags(
+            QtCore.Qt.ItemFlag.ItemIsEnabled
+            | QtCore.Qt.ItemFlag.ItemIsSelectable
+        )
+        self.variants_table.setItem(row, column, item)
+
+    def _set_editable_item(self, row: int, column: int, text: str) -> None:
+        """Установить редактируемую ячейку таблицы.
+
+        Args:
+            row: Индекс строки.
+            column: Индекс колонки.
+            text: Текст ячейки.
+        """
+        if self.variants_table is None:
+            return
+
+        item = QtWidgets.QTableWidgetItem(text)
+        item.setFlags(
+            QtCore.Qt.ItemFlag.ItemIsEnabled
+            | QtCore.Qt.ItemFlag.ItemIsSelectable
+            | QtCore.Qt.ItemFlag.ItemIsEditable
+        )
+        self.variants_table.setItem(row, column, item)
