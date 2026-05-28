@@ -24,6 +24,7 @@ from presentation.ui.list_scan_issues_dialog import (
     rows_from_diagnostics,
 )
 from presentation.ui.theme import apply_dark_palette, apply_light_palette
+from presentation.ui.term_replace_page import TermReplacePage
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -68,6 +69,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.text_cleaner_save_btn: QtWidgets.QPushButton | None = None
         self.text_cleaner_clear_btn: QtWidgets.QPushButton | None = None
         self.chk_text_cleaner_preserve_separator_spacing: QtWidgets.QCheckBox | None = None
+
+        # --- вкладка "Замена" ---
+        self.term_replace_page: TermReplacePage | None = None
 
         # state для "Список" (отдельно от Обзора)
         self.list_q: "queue.Queue[tuple[str, object]]" = queue.Queue()
@@ -349,6 +353,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         t_splitter.setStretchFactor(0, 1)
         t_splitter.setStretchFactor(1, 1)
+
+        # ---------------------------
+        # Вкладка "Замена" (после Текст)
+        # ---------------------------
+        self.term_replace_page = TermReplacePage(self)
+        tabs.addTab(self.term_replace_page, "Замена")
 
         page_settings = QtWidgets.QWidget()
         tabs.addTab(page_settings, "Настройки")

@@ -10,6 +10,7 @@ from domain.list_scan import (
     ListScanIssueItem,
 )
 from presentation.ui.main_window import MainWindow
+from presentation.ui.term_replace_page import TermReplacePage
 from presentation.ui.list_scan_issues_dialog import (
     ListScanIssueDialog,
     ListScanIssueDialogRow,
@@ -52,7 +53,17 @@ def test_mainwindow_has_expected_tab_order_with_text_tab(qapp) -> None:
     w = MainWindow(cfg=Config())
 
     labels = _tab_labels(w)
-    assert labels == ["Обзор", "Список", "Diff", "Текст", "Настройки"]
+    assert labels == ["Обзор", "Список", "Diff", "Текст", "Замена", "Настройки"]
+
+
+def test_mainwindow_has_term_replace_page(qapp) -> None:
+    """Проверяет подключение вкладки «Замена» через отдельный UI-модуль."""
+    w = MainWindow(cfg=Config())
+
+    assert w.term_replace_page is not None
+    assert isinstance(w.term_replace_page, TermReplacePage)
+    assert w.term_replace_page.apply_btn is not None
+    assert w.term_replace_page.apply_btn.isEnabled() is False
 
 
 def test_format_combos_default_to_markdown_and_use_expected_order(qapp) -> None:
